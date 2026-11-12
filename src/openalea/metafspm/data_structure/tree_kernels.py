@@ -9,7 +9,9 @@ Exactness: chain scans and path windows add their terms in the same sequential o
 (e.g. rhizodep's distance_from_tip and supply for elongation), so their results are identical bit for bit.
 """
 import numpy as np
-from numba import njit, prange
+
+from openalea.metafspm.kernels import (_chain_positions, _count_window, _follow_chains, _path_window, _segmented_scan,
+                                       _window_contributions, depth_first_orders, tree_depths, tree_levels)
 
 
 # ── Chains ─────────────────────────────────────────────────────────────────────
@@ -49,55 +51,6 @@ def chains_from_groups(group: np.ndarray, rank: np.ndarray) -> dict:
     return {"order": order, "offsets": offsets, "chain": chain, "position": position}
 
 
-@njit(cache=True)
-def _follow_chains(starts, successor, n):
-    order = np.empty(n, dtype=np.int64)
-    offsets = np.empty(starts.size + 1, dtype=np.int64)
-    k = 0
-    for c in range(starts.size):
-        offsets[c] = k
-        v = starts[c]
-        while v >= 0 and k < n:
-            order[k] = v
-            k += 1
-            v = successor[v]
-    offsets[starts.size] = k
-    return order[:k], offsets
-
-
-@njit(cache=True)
-def _chain_positions(order, offsets, chain, position):
-    for c in range(offsets.size - 1):
-        for i in range(offsets[c], offsets[c + 1]):
-            chain[order[i]] = c
-            position[order[i]] = i - offsets[c]
-
-
-@njit(cache=True, parallel=True)
-def _segmented_scan(values, order, offsets, op_max, reverse, exclusive):
-    """Inclusive or exclusive scan (sum or max) of values (n, k) along each chain, sequentially, in parallel over chains."""
-    out = np.zeros_like(values)
-    for c in prange(offsets.size - 1):
-        start, end = offsets[c], offsets[c + 1]
-        for j in range(values.shape[1]):
-            acc = 0.
-            first = True
-            for t in range(end - start):
-                i = order[end - 1 - t] if reverse else order[start + t]
-                if exclusive:
-                    out[i, j] = acc if not first else (-np.inf if op_max else 0.)
-                if first:
-                    acc = values[i, j]
-                    first = False
-                elif op_max:
-                    acc = max(acc, values[i, j])
-                else:
-                    acc = acc + values[i, j]
-                if not exclusive:
-                    out[i, j] = acc
-    return out
-
-
 def chain_scan(values, chains: dict, op: str = "sum", reverse: bool = False, exclusive: bool = False) -> np.ndarray:
     """
     Cumulative sum or max of *values* along each chain, from its start (reverse=False) or from its end
@@ -105,8 +58,10 @@ def chain_scan(values, chains: dict, op: str = "sum", reverse: bool = False, exc
     """
     if op not in ("sum", "max"):
         raise ValueError(f"chain_scan: op must be 'sum' or 'max', got '{op}'")
+    from openalea.metafspm.compute import Compute
     array, vector = _as_columns(values)
-    out = _segmented_scan(array, chains["order"], chains["offsets"], op == "max", reverse, exclusive)
+    with Compute.current().parallel("kernels.chain_scan", chains["offsets"].size - 1):
+        out = _segmented_scan(array, chains["order"], chains["offsets"], op == "max", reverse, exclusive)
     return out if vector else out[:, 0]
 
 
@@ -141,26 +96,48 @@ def chain_write(event, values, chains: dict, k: int = 1, base=None) -> np.ndarra
 # ── Levels and accumulations ───────────────────────────────────────────────────
 
 def depth(parents: np.ndarray) -> np.ndarray:
-    """Number of edges from each node to its root (pointer doubling, synchronous updates)."""
-    parents = np.asarray(parents, dtype=np.int64)
-    dist = (parents >= 0).astype(np.int64)
-    jump = parents.copy()
-    while True:
-        idx = np.flatnonzero(jump >= 0)
-        if idx.size == 0:
-            return dist
-        above = jump[idx]
-        dist_above, jump_above = dist[above].copy(), jump[above].copy()
-        dist[idx] += dist_above
-        jump[idx] = jump_above
+    """Number of edges from each node to its root (kernels.tree_depths)."""
+    return tree_depths(np.ascontiguousarray(parents, dtype=np.int64))
 
 
 def levels(parents: np.ndarray) -> list:
-    """Node indices grouped by depth, from the roots."""
-    d = depth(parents)
-    order = np.argsort(d, kind="stable")
-    bounds = np.flatnonzero(np.r_[True, np.diff(d[order]) != 0, True])
-    return [order[bounds[i]:bounds[i + 1]] for i in range(bounds.size - 1)]
+    """Node indices grouped by depth, from the roots, ascending within each (kernels.tree_levels)."""
+    order, offsets = tree_levels(np.ascontiguousarray(parents, dtype=np.int64))
+    if order.size == 0:
+        return [order]                          # no node: one empty level (as a fold over none expects)
+    return [order[offsets[i]:offsets[i + 1]] for i in range(offsets.size - 1)]
+
+
+def children_csr(parents: np.ndarray) -> tuple:
+    """(indptr, indices): each node's children, ascending, as a CSR (the children of v: indices[indptr[v]:indptr[v +
+    1]]) from *parents* (-1 at a root)."""
+    parents = np.asarray(parents, dtype=np.int64)
+    n = parents.size
+    order = np.argsort(parents, kind="stable")
+    has = parents[order] >= 0
+    indices = order[has]
+    indptr = np.searchsorted(parents[order][has], np.arange(n + 1))
+    return indptr, indices
+
+
+def traversal(parents: np.ndarray, children: tuple = None, roots: np.ndarray = None) -> dict:
+    """
+    The traversal arrays of a forest given by each node's *parents* index (-1 at a root): {"parents", "children" (its
+    CSR: *children*, default children_csr, ascending), "roots" (default: the nodes without parent, ascending), "tips",
+    "pre", "post"}, the depth-first orders from each root in turn, each node's children in their CSR order
+    (kernels.depth_first_orders). A node not reached from the roots raises (a cycle).
+    """
+    parents = np.asarray(parents, dtype=np.int64)
+    n = parents.size
+    indptr, indices = children_csr(parents) if children is None else children
+    roots = np.flatnonzero(parents < 0) if roots is None else np.asarray(roots, dtype=np.int64)
+    tips = np.flatnonzero(np.diff(indptr) == 0)
+    pre, post = depth_first_orders(np.ascontiguousarray(indptr, dtype=np.int64),
+                                   np.ascontiguousarray(indices, dtype=np.int64), roots, n)
+    if pre.size != n:
+        raise ValueError("the graph has a cycle: traversal orders need a tree")
+    return {"parents": parents, "children": (indptr, indices), "roots": roots, "tips": tips, "pre": pre,
+            "post": post}
 
 
 def accumulate(values, parents: np.ndarray, direction: str = "up", op: str = "sum") -> np.ndarray:
@@ -323,29 +300,6 @@ def chain_recurrence(update, values, chains: dict) -> np.ndarray:
 
 # ── Windows towards the base ───────────────────────────────────────────────────
 
-@njit(cache=True, parallel=True)
-def _path_window(targets, parents, budget, extent, values, include):
-    sums = np.zeros((targets.size, values.shape[1]))
-    for t in prange(targets.size):
-        node = targets[t]
-        remaining = budget[node]
-        current = node
-        while remaining > 0:
-            if remaining > extent[current]:
-                if include[current]:
-                    for j in range(values.shape[1]):
-                        sums[t, j] += values[current, j]
-                    remaining = remaining - extent[current]
-                current = parents[current]
-                if current < 0:
-                    break
-            else:
-                # value * remaining / extent, in this order (rhizodep's), for identical rounding
-                for j in range(values.shape[1]):
-                    sums[t, j] += values[current, j] * remaining / extent[current]
-                remaining = 0.
-    return sums
-
 
 def path_window(parents, budget, extent, values, where=None, include=None) -> np.ndarray:
     """
@@ -359,52 +313,14 @@ def path_window(parents, budget, extent, values, where=None, include=None) -> np
     n = array.shape[0]
     targets = np.arange(n, dtype=np.int64) if where is None else np.flatnonzero(np.asarray(where, dtype=bool))
     include = np.ones(n, dtype=np.bool_) if include is None else np.asarray(include, dtype=np.bool_)
-    sums = _path_window(targets, np.asarray(parents, dtype=np.int64), np.broadcast_to(np.asarray(budget, float), (n,)).copy(),
-                        np.asarray(extent, dtype=np.float64), np.ascontiguousarray(array), include)
+    from openalea.metafspm.compute import Compute
+    with Compute.current().parallel("kernels.path_window", targets.size):
+        sums = _path_window(targets, np.asarray(parents, dtype=np.int64),
+                            np.broadcast_to(np.asarray(budget, float), (n,)).copy(),
+                            np.asarray(extent, dtype=np.float64), np.ascontiguousarray(array), include)
     out = np.zeros_like(array)
     out[targets] = sums
     return out if vector else out[:, 0]
-
-
-@njit(cache=True)
-def _count_window(targets, parents, budget, extent, include):
-    counts = np.zeros(targets.size, dtype=np.int64)
-    for t in range(targets.size):
-        remaining, current, count = budget[targets[t]], targets[t], 0
-        while remaining > 0:
-            if remaining > extent[current]:
-                if include[current]:
-                    count += 1
-                    remaining = remaining - extent[current]
-                current = parents[current]
-                if current < 0:
-                    break
-            else:
-                count += 1
-                remaining = 0.
-        counts[t] = count
-    return counts
-
-
-@njit(cache=True)
-def _window_contributions(targets, parents, budget, extent, values, include, offsets, supplier, contribution):
-    for t in prange(targets.size):
-        remaining, current, k = budget[targets[t]], targets[t], offsets[t]
-        while remaining > 0:
-            if remaining > extent[current]:
-                if include[current]:
-                    supplier[k] = current
-                    contribution[k] = values[current]
-                    k += 1
-                    remaining = remaining - extent[current]
-                current = parents[current]
-                if current < 0:
-                    break
-            else:
-                supplier[k] = current
-                contribution[k] = values[current] * remaining / extent[current]
-                k += 1
-                remaining = 0.
 
 
 def path_contributions(parents, budget, extent, values, targets, include=None) -> tuple:

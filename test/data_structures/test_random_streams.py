@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure import random_streams
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
@@ -16,13 +15,8 @@ from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import rate
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
 
 
 def test_draws_depend_on_the_entity_not_on_the_order_or_the_others():
@@ -51,7 +45,7 @@ def test_distributions():
 
 @dataclass
 class Emergence(FunctionalComponent):
-    draw: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    draw: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _draw(self, draw):
@@ -59,38 +53,34 @@ class Emergence(FunctionalComponent):
 
 
 def _ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def test_component_streams_advance_and_are_reproducible():
-    ds = _ds()
-    model = Emergence(data_structure=ds)
+    data_structure = _ds()
+    model = Emergence(data_structure=data_structure)
     model()
-    first = ds.get("draw").copy()
+    first = data_structure.get("draw").copy()
     model()
-    assert not np.any(ds.get("draw") == first)                 # a new step at each call
-    Choregrapher().reset()
-    Choregrapher().add_simulation_time_step(1)
+    assert not np.any(data_structure.get("draw") == first)                 # a new step at each call
     again = _ds()
     replay = Emergence(data_structure=again)
     replay()
     np.testing.assert_array_equal(again.get("draw"), first)    # the same run gives the same draws
-    np.testing.assert_array_equal(ds.random(ids=[ds.entity_ids("node")[0]], stream="Emergence.emergence"),
+    np.testing.assert_array_equal(data_structure.random(ids=[data_structure.entity_ids("node")[0]], stream="Emergence.emergence"),
                                   first[:1])
 
 
 def test_streams_continue_across_a_checkpoint(tmp_path):
-    ds = _ds()
-    model = Emergence(data_structure=ds)
+    data_structure = _ds()
+    model = Emergence(data_structure=data_structure)
     model()
-    ds.checkpoint(str(tmp_path / "c"))
+    data_structure.checkpoint(str(tmp_path / "c"))
     model()
-    expected = ds.get("draw").copy()
-    Choregrapher().reset()
-    Choregrapher().add_simulation_time_step(1)
+    expected = data_structure.get("draw").copy()
     restored = MPGDataStructure.restore(str(tmp_path / "c"))
     Emergence(data_structure=restored)()
     np.testing.assert_array_equal(restored.get("draw"), expected)

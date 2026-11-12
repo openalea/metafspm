@@ -1,7 +1,7 @@
 from simple_seedling import seedling
 
 
-g = seedling.g
+mtg = seedling.mtg
 
 # Unpack all vertex IDs for readable assertions
 axis          = seedling.axis
@@ -100,8 +100,8 @@ def test_combined_traversal():
       root_internode1 (complex of root_segment2) precedes root_internode2
       (complex of root_segment4) in the organ-scale topology.
     """
-    pre  = [v for v in g.pre_order_mpg()  if v != g.root]
-    post = [v for v in g.post_order_mpg() if v != g.root]
+    pre  = [v for v in mtg._pre_order_mpg()  if v != mtg.root]
+    post = [v for v in mtg._post_order_mpg() if v != mtg.root]
 
     # ── Completeness ────────────────────────────────────────────────────────────
     assert set(pre)  == _ALL_VERTICES, f"pre_order_mpg missing: {_ALL_VERTICES - set(pre)}"

@@ -4,7 +4,6 @@ Both levels are pure Python — no MTG dependency.  Minimal concrete
 subclasses built inline verify:
   - instantiation guard (ABC enforcement)
   - extract_state / inject_state round-trip
-  - extract_algebraic / inject_algebraic round-trip
   - n_dof default
   - incidence matrix column-sum invariant (conservative flow)
   - validate() no-op default
@@ -58,16 +57,16 @@ class _LinearGraph(GraphDataStructure):
     def node_ids(self): return [0, 1, 2]
     def edges(self): return [(0, 1), (1, 2)]
 
-    def incidence_matrix(self):
+    def _incidence_matrix(self):
         # GraphDataStructure convention: +1 at the tail (parent), -1 at the head (child)
         return np.array([[1., 0.], [-1., 1.], [0., -1.]])
 
-    def node_property(self, name):
+    def _node_property(self, name):
         if name == 'p':
             return self._p.copy()
         raise KeyError(name)
 
-    def edge_property(self, name):
+    def _edge_property(self, name):
         if name == 'k':
             return self._k.copy()
         raise KeyError(name)
@@ -93,40 +92,40 @@ def test_data_structure_cannot_be_instantiated():
 
 
 def test_minimal_data_structure_available_vars():
-    ds = _ScalarDS(a=1.0, b=2.0)
-    assert set(ds.available_vars()) == {'a', 'b'}
+    data_structure = _ScalarDS(a=1.0, b=2.0)
+    assert set(data_structure.available_vars()) == {'a', 'b'}
 
 
 def test_minimal_data_structure_n_dof():
-    ds = _ScalarDS(a=1.0, b=2.0)
-    assert ds.n_dof == 2
+    data_structure = _ScalarDS(a=1.0, b=2.0)
+    assert data_structure.n_dof == 2
 
 
 def test_extract_state_returns_flat_array():
-    ds = _ScalarDS(a=1.0, b=2.0)
-    x = ds.extract_state(['a', 'b'])
+    data_structure = _ScalarDS(a=1.0, b=2.0)
+    x = data_structure.extract_state(['a', 'b'])
     np.testing.assert_array_equal(x, [1.0, 2.0])
 
 
 def test_inject_state_updates_values():
-    ds = _ScalarDS(a=1.0, b=2.0)
-    ds.inject_state(np.array([10.0, 20.0]), ['a', 'b'])
-    assert ds._vals['a'] == 10.0
-    assert ds._vals['b'] == 20.0
+    data_structure = _ScalarDS(a=1.0, b=2.0)
+    data_structure.inject_state(np.array([10.0, 20.0]), ['a', 'b'])
+    assert data_structure._vals['a'] == 10.0
+    assert data_structure._vals['b'] == 20.0
 
 
 def test_extract_inject_state_roundtrip():
-    ds = _ScalarDS(a=3.0, b=7.0)
-    x = ds.extract_state(['a', 'b'])
-    ds.inject_state(x * 2, ['a', 'b'])
-    assert ds._vals['a'] == 6.0
-    assert ds._vals['b'] == 14.0
+    data_structure = _ScalarDS(a=3.0, b=7.0)
+    x = data_structure.extract_state(['a', 'b'])
+    data_structure.inject_state(x * 2, ['a', 'b'])
+    assert data_structure._vals['a'] == 6.0
+    assert data_structure._vals['b'] == 14.0
 
 
 def test_validate_noop_by_default():
     """DataStructure.validate() is a no-op unless overridden."""
-    ds = _ScalarDS(a=1.0)
-    ds.validate()   # must not raise
+    data_structure = _ScalarDS(a=1.0)
+    data_structure.validate()   # must not raise
 
 
 # ── GraphDataStructure tests ──────────────────────────────────────────────────
@@ -137,58 +136,50 @@ def test_graph_data_structure_cannot_be_instantiated():
 
 
 def test_graph_n_dof_equals_n_nodes():
-    g = _LinearGraph()
-    assert g.n_dof == g.n_nodes() == 3
+    mtg = _LinearGraph()
+    assert mtg.n_dof == mtg.n_nodes() == 3
 
 
 def test_graph_n_edges():
-    g = _LinearGraph()
-    assert g.n_edges() == 2
+    mtg = _LinearGraph()
+    assert mtg.n_edges() == 2
 
 
 def test_graph_node_ids():
-    g = _LinearGraph()
-    assert g.node_ids() == [0, 1, 2]
+    mtg = _LinearGraph()
+    assert mtg.node_ids() == [0, 1, 2]
 
 
 def test_graph_edges():
-    g = _LinearGraph()
-    assert g.edges() == [(0, 1), (1, 2)]
+    mtg = _LinearGraph()
+    assert mtg.edges() == [(0, 1), (1, 2)]
 
 
 def test_extract_inject_state_graph_roundtrip():
-    g = _LinearGraph()
-    x = g.extract_state(['p'])
+    mtg = _LinearGraph()
+    x = mtg.extract_state(['p'])
     np.testing.assert_array_equal(x, [1.0, 2.0, 3.0])
-    g.inject_state(x * 2, ['p'])
-    np.testing.assert_array_equal(g.node_property('p'), [2.0, 4.0, 6.0])
-
-
-def test_extract_inject_algebraic_roundtrip():
-    g = _LinearGraph()
-    y = g.extract_algebraic(['k'])
-    np.testing.assert_array_equal(y, [10.0, 20.0])
-    g.inject_algebraic(y * 3, ['k'])
-    np.testing.assert_array_equal(g.edge_property('k'), [30.0, 60.0])
+    mtg.inject_state(x * 2, ['p'])
+    np.testing.assert_array_equal(mtg._node_property('p'), [2.0, 4.0, 6.0])
 
 
 def test_incidence_matrix_shape():
-    g = _LinearGraph()
-    B = g.incidence_matrix()
+    mtg = _LinearGraph()
+    B = mtg._incidence_matrix()
     assert B.shape == (3, 2)
 
 
 def test_incidence_matrix_column_sums_zero():
     """Each column of B sums to 0 — flow leaving one node enters the other."""
-    g = _LinearGraph()
-    B = g.incidence_matrix()
+    mtg = _LinearGraph()
+    B = mtg._incidence_matrix()
     np.testing.assert_array_equal(B.sum(axis=0), [0.0, 0.0])
 
 
 def test_incidence_matrix_values():
     """Tail (parent) node = +1, head (child) node = -1 (the solver's GraphView convention)."""
-    g = _LinearGraph()
-    B = g.incidence_matrix()
+    mtg = _LinearGraph()
+    B = mtg._incidence_matrix()
     # Edge 0: n0 → n1
     assert B[0, 0] == +1.0
     assert B[1, 0] == -1.0

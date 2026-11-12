@@ -10,7 +10,7 @@ only the label, n_id_a / n_id_b, and vertex_id properties.
 
 Handles both population modes:
 - populate_graph (node-creation)             : nodes colored by SubOrgan label (vertex_id present)
-- populate_graph_custom_connections (wiring) : nodes colored by own Compartment/Cell label
+- wire_junctions (wiring) : nodes colored by own Compartment/Cell label
 
 When node_property / edge_property are provided, the corresponding elements are
 colored via a continuous colormap (viridis for nodes, plasma for edges) and a

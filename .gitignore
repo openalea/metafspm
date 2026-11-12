@@ -109,5 +109,7 @@ test/*.png
 
 # example outputs (records and figures written when running the examples)
 examples/**/outputs/
+test/benchmarks/**/outputs/
 
 /dev*.md
+/.devplan/

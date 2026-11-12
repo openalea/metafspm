@@ -10,74 +10,68 @@ import numpy as np
 import pytest
 from scipy.linalg import expm
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.solve.decorator import boundary_condition, boundary_set, graph_system, node_balance, node_rate
 from plants import seedling_ds
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, K = 0.5, 0.3
 
 
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
-
-
 def _ds():
-    _, _, ds = seedling_ds()
-    collar = np.zeros(ds.n_nodes())
-    collar[ds.roots()[0]] = 1.
-    ds.register("is_collar", collar, location="node")
-    return ds
+    _, _, data_structure = seedling_ds()
+    collar = np.zeros(data_structure.n_nodes())
+    collar[data_structure.roots()[0]] = 1.
+    data_structure.register("is_collar", collar, location="node")
+    return data_structure
 
 
-def _laplacian(ds):
-    B = ds.incidence_matrix().toarray()
+def _laplacian(data_structure):
+    B = data_structure._incidence_matrix().toarray()
     return B @ B.T
 
 
 class _Rate:
     @node_rate(field="u")
     def _diffusion(self, u):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return -K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
 def _model(solver, **options):
     @dataclass
     class Diffusion(FunctionalComponent):
-        u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+        u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
         time_step = DT
         _solve = graph_system(node_unknowns=["u"], solver=solver, **options)(type("_solve", (_Rate,), {}))
     return Diffusion
 
 
 def _run(solver, **options):
-    ds = _ds()
-    model = _model(solver, **options)(data_structure=ds)
-    u0 = np.linspace(0., 1., ds.n_nodes())
-    ds.set("u", u0)
+    data_structure = _ds()
+    model = _model(solver, **options)(data_structure=data_structure)
+    u0 = np.linspace(0., 1., data_structure.n_nodes())
+    data_structure.set("u", u0)
     model()
-    return ds, u0, np.array(ds.get("u"))
+    return data_structure, u0, np.array(data_structure.get("u"))
 
 
 def test_a_rate_is_integrated_by_backward_euler_with_newton():
-    ds, u0, u = _run("newton")
-    expected = np.linalg.solve(np.eye(ds.n_nodes()) + DT * K * _laplacian(ds), u0)
+    data_structure, u0, u = _run("newton")
+    expected = np.linalg.solve(np.eye(data_structure.n_nodes()) + DT * K * _laplacian(data_structure), u0)
     np.testing.assert_allclose(u, expected, rtol=1e-10)
 
 
 def test_a_rate_is_integrated_by_forward_euler_with_explicit_euler():
-    ds, u0, u = _run("explicit_euler")
-    np.testing.assert_allclose(u, u0 - DT * K * _laplacian(ds) @ u0, rtol=1e-12)
+    data_structure, u0, u = _run("explicit_euler")
+    np.testing.assert_allclose(u, u0 - DT * K * _laplacian(data_structure) @ u0, rtol=1e-12)
 
 
 def test_a_rate_is_integrated_exactly_by_an_ivp_solver():
-    ds, u0, u = _run("scipy_ivp_bdf")
-    np.testing.assert_allclose(u, expm(-DT * K * _laplacian(ds)) @ u0, atol=1e-4)
+    data_structure, u0, u = _run("scipy_ivp_bdf")
+    np.testing.assert_allclose(u, expm(-DT * K * _laplacian(data_structure)) @ u0, atol=1e-4)
 
 
 def test_the_three_solvers_conserve_the_total():
@@ -85,46 +79,40 @@ def test_the_three_solvers_conserve_the_total():
     np.testing.assert_allclose(totals, totals[0], rtol=1e-6)
 
 
-def test_implicit_euler_is_a_deprecated_alias_of_newton():
-    with pytest.warns(DeprecationWarning, match="implicit_euler' is deprecated"):
-        model_class = _model("implicit_euler")
-    ds = _ds()
-    model = model_class(data_structure=ds)
-    u0 = np.linspace(0., 1., ds.n_nodes())
-    ds.set("u", u0)
-    model()
-    np.testing.assert_allclose(ds.get("u"), np.linalg.solve(np.eye(ds.n_nodes()) + DT * K * _laplacian(ds), u0),
-                               rtol=1e-10)
+def test_implicit_euler_is_no_solver_key():
+    """A backward-Euler step is "newton" with transient=True (the alias "implicit_euler" removed)."""
+    with pytest.raises(ValueError, match="Unknown solver 'implicit_euler'"):
+        _model("implicit_euler")
 
 
 @dataclass
 class RateWithInflow(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
     class _solve(_Rate):
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="neumann", value=0.2)
+        collar = boundary_set(where={"is_collar": ">0"}, condition="neumann", value=0.2)
 
 
 def test_a_neumann_inflow_adds_to_the_rate():
-    ds = _ds()
-    model = RateWithInflow(data_structure=ds)
-    total = ds.get("u").sum()
+    data_structure = _ds()
+    model = RateWithInflow(data_structure=data_structure)
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.2 * DT)
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.2 * DT)
 
 
 # ---------------------------------------------------------------- errors
 
 def _residual_balance(self, u):
-    B = self._graph_view.incidence
-    return (u - self.previous("u")) / self.dt + K * np.asarray(B @ (B.T @ u)).reshape(-1)
+    B = self.graph_view.incidence
+    return (u - self.previous("u")) / self.step_duration + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
 @dataclass
 class ResidualWithExplicit(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
@@ -139,8 +127,8 @@ def test_explicit_and_ivp_solvers_refuse_a_residual():
 
 @dataclass
 class MixedForms(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    v: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    v: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u", "v"], solver="newton")
@@ -157,12 +145,12 @@ def test_one_graph_system_uses_one_form():
 
 @dataclass
 class DirichletWithExplicit(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], solver="explicit_euler")
     class _solve(_Rate):
-        @boundary_condition("node", "dirichlet", field="u", filters={"is_collar": ">0"})
+        @boundary_condition("node", "dirichlet", field="u", where={"is_collar": ">0"})
         def _collar(self, u):
             return u - 2.
 
@@ -170,3 +158,14 @@ class DirichletWithExplicit(FunctionalComponent):
 def test_explicit_solvers_refuse_dirichlet_conditions():
     with pytest.raises(ValueError, match="Dirichlet conditions"):
         DirichletWithExplicit(data_structure=_ds())()
+
+
+def test_the_ivp_solvers_take_the_graph_systems_error_control():
+    """integration_relative_tolerance, integration_absolute_tolerance and max_step of @graph_system reach the IVP solvers (they always ran at their own defaults)."""
+    exact = None
+    errors = {}
+    for relative_tolerance in (1e-3, 1e-10):
+        data_structure, u0, u = _run("scipy_ivp_bdf", integration_relative_tolerance=relative_tolerance, integration_absolute_tolerance=relative_tolerance * 1e-3)
+        exact = expm(-DT * K * _laplacian(data_structure)) @ u0
+        errors[relative_tolerance] = np.abs(u - exact).max()
+    assert errors[1e-10] < 1e-8 < errors[1e-3]

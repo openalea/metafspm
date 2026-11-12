@@ -18,43 +18,43 @@ from plants import seedling_ds
 
 
 def _seedling():
-    g, seedling = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return g, seedling, MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, seedling = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return mtg, seedling, MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
-def _grow(g, seedling):
+def _grow(mtg, seedling):
     """A new root segment below the deepest root tip; returns its vid."""
-    return g.add_child(seedling.root_segment6, **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
-                                                             label=g.labels.SubOrgan.RootSegment))
+    return mtg.add_child(seedling.root_segment6, **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<',
+                                                             label=mtg.labels.SubOrgan.RootSegment))
 
 
-def _compartment_of(g):
+def _compartment_of(mtg):
     """{from_scale vid: Compartment vid}."""
-    vertex_id = g.property("vertex_id")
-    return {int(vertex_id[c]): int(c) for c in g.vertices(scale=g.scales.Compartment) if c in vertex_id}
+    vertex_id = mtg.property("vertex_id")
+    return {int(vertex_id[c]): int(c) for c in mtg.vertices(scale=mtg.scales.Compartment) if c in vertex_id}
 
 
 # ---------------------------------------------------------------- checkpoints loaded in place
 
 def test_an_mpg_datastructure_loads_its_checkpoint_in_place(tmp_path):
-    _, _, ds = _seedling()
-    ds.register("hexose", np.random.default_rng(0).random(ds.n_nodes()), location="node")
-    ds.register("total", 3., location="scalar")
-    saved = {name: np.array(ds.get(name)) for name in ("hexose", "total")}
-    ds.checkpoint(str(tmp_path / "plant"))
-    ds.set("hexose", 0.)
-    ds.set("total", 0.)
-    reference = ds
-    ds.load_checkpoint(str(tmp_path / "plant"))
-    assert ds is reference
+    _, _, data_structure = _seedling()
+    data_structure.register("hexose", np.random.default_rng(0).random(data_structure.n_nodes()), location="node")
+    data_structure.register("total", 3., location="scalar")
+    saved = {name: np.array(data_structure.get(name)) for name in ("hexose", "total")}
+    data_structure.checkpoint(str(tmp_path / "plant"))
+    data_structure.set("hexose", 0.)
+    data_structure.set("total", 0.)
+    reference = data_structure
+    data_structure.load_checkpoint(str(tmp_path / "plant"))
+    assert data_structure is reference
     for name, values in saved.items():
-        np.testing.assert_array_equal(ds.get(name), values)
+        np.testing.assert_array_equal(data_structure.get(name), values)
 
 
 def test_a_grid_loads_its_checkpoint_in_place(tmp_path):
-    grid = ArrayDataStructure(shape=(3, 2, 2), dx=0.1)
+    grid = ArrayDataStructure(shape=(3, 2, 2), spacing=0.1)
     grid.register("nitrate", np.arange(12.).reshape(3, 2, 2), location="cell")
     grid.checkpoint(str(tmp_path / "grid"))
     grid.set("nitrate", -1.)
@@ -65,48 +65,48 @@ def test_a_grid_loads_its_checkpoint_in_place(tmp_path):
 def test_a_checkpoint_of_another_class_is_refused(tmp_path):
     grid = ArrayDataStructure(shape=(2,))
     grid.checkpoint(str(tmp_path / "grid"))
-    _, _, ds = _seedling()
+    _, _, data_structure = _seedling()
     with pytest.raises(TypeError, match="not a MPGDataStructure"):
-        ds.load_checkpoint(str(tmp_path / "grid"))
+        data_structure.load_checkpoint(str(tmp_path / "grid"))
 
 
 # ---------------------------------------------------------------- labels
 
 def test_the_labels_survive_pickling():
-    g, _, _ = _seedling()
-    labels = pickle.loads(pickle.dumps(g.labels))
-    assert labels.translator == g.labels.translator
-    assert labels.SubOrgan.RootSegment == g.labels.SubOrgan.RootSegment
-    assert labels.Compartment.Symplastic == g.labels.Compartment.Symplastic
+    mtg, _, _ = _seedling()
+    labels = pickle.loads(pickle.dumps(mtg.labels))
+    assert labels.translator == mtg.labels.translator
+    assert labels.SubOrgan.RootSegment == mtg.labels.SubOrgan.RootSegment
+    assert labels.Compartment.Symplastic == mtg.labels.Compartment.Symplastic
 
 
 # ---------------------------------------------------------------- vector-valued variables
 
 def test_a_vector_variable_has_one_row_per_entity():
-    _, _, ds = _seedling()
-    ds.register("pools", 0., location="node", shape=(3,))
-    assert ds.get("pools").shape == (ds.n_nodes(), 3)
-    values = np.arange(3. * ds.n_nodes()).reshape(-1, 3)
-    ds.set("pools", values)
-    np.testing.assert_array_equal(ds.get("pools"), values)
+    _, _, data_structure = _seedling()
+    data_structure.register("pools", 0., location="node", shape=(3,))
+    assert data_structure.get("pools").shape == (data_structure.n_nodes(), 3)
+    values = np.arange(3. * data_structure.n_nodes()).reshape(-1, 3)
+    data_structure.set("pools", values)
+    np.testing.assert_array_equal(data_structure.get("pools"), values)
 
 
 def test_vector_variables_are_carried_over_growth():
-    g, seedling, ds = _seedling()
-    ds.register("fresh", location="node", default=7., shape=(2,))   # new entities get the default
-    ds.register("inherited", 0., location="node", shape=(2,), on_grow="inherit")
-    rows = np.arange(2. * ds.n_nodes()).reshape(-1, 2)
-    ds.set("fresh", rows)
-    ds.set("inherited", rows)
+    mtg, seedling, data_structure = _seedling()
+    data_structure.register("fresh", location="node", default=7., shape=(2,))   # new entities get the default
+    data_structure.register("inherited", 0., location="node", shape=(2,), on_grow="inherit")
+    rows = np.arange(2. * data_structure.n_nodes()).reshape(-1, 2)
+    data_structure.set("fresh", rows)
+    data_structure.set("inherited", rows)
     parent = int(seedling.root_segment6)
-    parent_row = rows[list(ds.entity_ids("node")).index(parent)]
-    new = _grow(g, seedling)
-    ds.update_topology()
-    index = {int(v): i for i, v in enumerate(ds.entity_ids("node"))}
-    assert ds.get("fresh").shape == (ds.n_nodes(), 2)
-    np.testing.assert_array_equal(ds.get("fresh")[index[new]], [7., 7.])
-    np.testing.assert_array_equal(ds.get("inherited")[index[new]], parent_row)
-    np.testing.assert_array_equal(ds.get("fresh")[index[parent]], parent_row)       # existing rows kept
+    parent_row = rows[list(data_structure.entity_ids("node")).index(parent)]
+    new = _grow(mtg, seedling)
+    data_structure.update_topology()
+    index = {int(v): i for i, v in enumerate(data_structure.entity_ids("node"))}
+    assert data_structure.get("fresh").shape == (data_structure.n_nodes(), 2)
+    np.testing.assert_array_equal(data_structure.get("fresh")[index[new]], [7., 7.])
+    np.testing.assert_array_equal(data_structure.get("inherited")[index[new]], parent_row)
+    np.testing.assert_array_equal(data_structure.get("fresh")[index[parent]], parent_row)       # existing rows kept
 
 
 def test_vector_variables_are_checkpointed(tmp_path):
@@ -120,97 +120,97 @@ def test_vector_variables_are_checkpointed(tmp_path):
 # ---------------------------------------------------------------- mask versions
 
 def test_the_mask_version_changes_with_the_mask_values_only():
-    g, seedling, ds = _seedling()
-    ds.register("flag", 0., location="node")
-    ds.define_mask("flagged", {"flag": ">0"})
-    version = ds.mask_version("flagged")
-    ds.set("flag", 0.)                                   # written, same selection
-    assert ds.mask_version("flagged") == version
-    ds.set("flag", np.r_[1., np.zeros(ds.n_nodes() - 1)])
-    assert ds.mask_version("flagged") == version + 1
-    _grow(g, seedling)
-    ds.update_topology()                                  # a new entity: another selection array
-    assert ds.mask("flagged").shape == (ds.n_nodes(),)
-    assert ds.mask_version("flagged") == version + 2
+    mtg, seedling, data_structure = _seedling()
+    data_structure.register("flag", 0., location="node")
+    data_structure.define_mask("flagged", {"flag": ">0"})
+    version = data_structure.mask_version("flagged")
+    data_structure.set("flag", 0.)                                   # written, same selection
+    assert data_structure.mask_version("flagged") == version
+    data_structure.set("flag", np.r_[1., np.zeros(data_structure.n_nodes() - 1)])
+    assert data_structure.mask_version("flagged") == version + 1
+    _grow(mtg, seedling)
+    data_structure.update_topology()                                  # a new entity: another selection array
+    assert data_structure.mask("flagged").shape == (data_structure.n_nodes(),)
+    assert data_structure.mask_version("flagged") == version + 2
 
 
 # ---------------------------------------------------------------- unregister
 
 def test_unregister_removes_a_variable_and_its_metadata():
-    _, _, ds = _seedling()
-    ds.register("a", 1., location="node")
-    ds.register("b", 2., location="node")
-    ds.derive("total", {"a": 1., "b": 1.})
-    version = ds.version
-    ds.unregister("total")
-    assert not ds.has("total") and "total" not in ds.derived()
-    assert ds.version > version
-    ds.register("total", 0., location="node")            # the name is free again
-    np.testing.assert_array_equal(ds.get("total"), 0.)
+    _, _, data_structure = _seedling()
+    data_structure.register("a", 1., location="node")
+    data_structure.register("b", 2., location="node")
+    data_structure.derive("total", {"a": 1., "b": 1.})
+    version = data_structure.version
+    data_structure.unregister("total")
+    assert not data_structure.has("total") and "total" not in data_structure.derived()
+    assert data_structure.version > version
+    data_structure.register("total", 0., location="node")            # the name is free again
+    np.testing.assert_array_equal(data_structure.get("total"), 0.)
 
 
 def test_an_alias_cannot_be_unregistered():
-    _, _, ds = _seedling()
-    ds.register("hexose", 1., location="node")
-    ds.alias("sugar", "hexose")
+    _, _, data_structure = _seedling()
+    data_structure.register("hexose", 1., location="node")
+    data_structure.alias("sugar", "hexose")
     with pytest.raises(ValueError, match="alias of 'hexose'"):
-        ds.unregister("sugar")
+        data_structure.unregister("sugar")
 
 
 def test_links_left_on_an_unregistered_variable_are_reported():
-    _, _, ds = _seedling()
-    ds.register("a", 1., location="node")
-    ds.register("b", 2., location="node")
-    ds.alias("a_again", "a")
-    ds.derive("total", {"a": 1., "b": 1.})
-    ds.unregister("a")
+    _, _, data_structure = _seedling()
+    data_structure.register("a", 1., location="node")
+    data_structure.register("b", 2., location="node")
+    data_structure.alias("a_again", "a")
+    data_structure.derive("total", {"a": 1., "b": 1.})
+    data_structure.unregister("a")
     with pytest.raises(ValueError) as error:
-        ds.validate_variables()
+        data_structure.validate_variables()
     assert "a_again" in str(error.value) and "total" in str(error.value)
 
 
 # ---------------------------------------------------------------- MTG tracking and reading
 
 def test_a_tracked_variable_reaches_the_mtg_and_is_read_back():
-    g, _, ds = _seedling()
-    spec = VariableSpec(name="water", location="node", scale=g.scales.SubOrgan)
-    values = np.arange(1., ds.n_nodes() + 1.)
-    ds.register("water", values, location="node")
-    assert ds.read_mtg(spec) is None                      # the property does not exist yet
-    ds.track_mtg(spec)
-    ds.flush_mtg()
-    water = g.property("water")
-    assert [water[int(v)] for v in ds.entity_ids("node")] == values.tolist()
-    np.testing.assert_array_equal(ds.read_mtg(spec), values)
+    mtg, _, data_structure = _seedling()
+    spec = VariableSpec(name="water", location="node", scale=mtg.scales.SubOrgan)
+    values = np.arange(1., data_structure.n_nodes() + 1.)
+    data_structure.register("water", values, location="node")
+    assert data_structure._read_mtg(spec) is None                      # the property does not exist yet
+    data_structure._track_mtg(spec)
+    data_structure.flush_mtg()
+    water = mtg.property("water")
+    assert [water[int(v)] for v in data_structure.entity_ids("node")] == values.tolist()
+    np.testing.assert_array_equal(data_structure._read_mtg(spec), values)
 
 
 def test_only_mtg_backed_variables_are_tracked():
-    g, _, ds = _seedling()
+    mtg, _, data_structure = _seedling()
     solver_only = VariableSpec(name="flux", location="node")             # no MTG scale
-    vector = VariableSpec(name="pools", location="node", scale=g.scales.SubOrgan, shape=(3,))
-    ds.register("flux", 1., location="node")
-    ds.register("pools", 1., location="node", shape=(3,))
+    vector = VariableSpec(name="pools", location="node", scale=mtg.scales.SubOrgan, shape=(3,))
+    data_structure.register("flux", 1., location="node")
+    data_structure.register("pools", 1., location="node", shape=(3,))
     for spec in (solver_only, vector):
-        ds.track_mtg(spec)
-        assert ds.read_mtg(spec) is None
-    ds.flush_mtg()
-    assert not dict(g.property("flux")) and not dict(g.property("pools"))
+        data_structure._track_mtg(spec)
+        assert data_structure._read_mtg(spec) is None
+    data_structure.flush_mtg()
+    assert not dict(mtg.property("flux")) and not dict(mtg.property("pools"))
 
 
 # ---------------------------------------------------------------- incremental graph extension
 
 def test_extend_graph_adds_the_new_segments_only():
-    g, seedling, _ = _seedling()
-    before = _compartment_of(g)
-    new = _grow(g, seedling)
-    change = g.extend_graph(g.scales.SubOrgan)
+    mtg, seedling, _ = _seedling()
+    before = _compartment_of(mtg)
+    new = _grow(mtg, seedling)
+    change = mtg.extend_graph(mtg.scales.SubOrgan)
     assert change["added"] == [new] and change["removed"] == []
-    after = _compartment_of(g)
+    after = _compartment_of(mtg)
     assert set(after) == set(before) | {new}
     assert all(after[v] == c for v, c in before.items())                # existing Compartments kept
-    n_id_b = g.property("n_id_b")
-    assert new in {int(n_id_b[c]) for c in g.vertices(scale=g.scales.Connection) if c in n_id_b}
-    assert g.extend_graph(g.scales.SubOrgan)["added"] == []              # nothing new the second time
+    n_id_b = mtg.property("n_id_b")
+    assert new in {int(n_id_b[c]) for c in mtg.vertices(scale=mtg.scales.Connection) if c in n_id_b}
+    assert mtg.extend_graph(mtg.scales.SubOrgan)["added"] == []              # nothing new the second time
 
 
 # ---------------------------------------------------------------- ArrayDict helpers
@@ -224,72 +224,62 @@ def test_arraydict_scatter_writes_at_keys():
         values.indices_of([40])
 
 
-def test_arraydict_reindex_restores_the_sorted_order():
-    values = ArrayDict({1: 1., 2: 2., 3: 3.})
-    values.order[:3] = [3, 1, 2]                          # keys rewritten out of order, values aligned with them
-    values.arr[:3] = [30., 10., 20.]
-    assert not values.check_invariant()
-    values.reindex_sorted_inplace()
-    assert values.check_invariant()
-    assert dict(values) == {1: 10., 2: 20., 3: 30.}
-
-
 # ---------------------------------------------------------------- accessors
 
 def test_get_set_are_live_and_in_place():
-    _, _, ds = seedling_ds()
-    n = ds.n_nodes()
-    ds.register("c", np.arange(n, dtype=float), location="node")
-    view = ds.get("c")
+    _, _, data_structure = seedling_ds()
+    n = data_structure.n_nodes()
+    data_structure.register("c", np.arange(n, dtype=float), location="node")
+    view = data_structure.get("c")
 
-    ds.set("c", np.ones(n))
-    assert view is ds.get("c") and (view == 1.).all()
-    assert ds.location("c") == "node" and ds.has("c") and not ds.has("nope")
+    data_structure.set("c", np.ones(n))
+    assert view is data_structure.get("c") and (view == 1.).all()
+    assert data_structure.location("c") == "node" and data_structure.has("c") and not data_structure.has("nope")
 
 
 def test_set_checks_length_and_registration():
-    _, _, ds = seedling_ds()
-    ds.register("q", location="edge", default=3.)
-    assert (ds.get("q") == 3.).all() and ds.get("q").shape == (ds.n_edges(),)
+    _, _, data_structure = seedling_ds()
+    data_structure.register("q", location="edge", default=3.)
+    assert (data_structure.get("q") == 3.).all() and data_structure.get("q").shape == (data_structure.n_edges(),)
     with pytest.raises(ValueError, match="q"):
-        ds.set("q", np.ones(ds.n_edges() + 1))
+        data_structure.set("q", np.ones(data_structure.n_edges() + 1))
     with pytest.raises(KeyError, match="unknown"):
-        ds.set("unknown", 1.)
+        data_structure.set("unknown", 1.)
 
 
 def test_version_counts_registrations():
-    _, _, ds = seedling_ds()
-    v0 = ds.version
-    ds.register("a", location="node")
-    ds.set("a", 1.)
-    assert ds.version == v0 + 1
+    _, _, data_structure = seedling_ds()
+    v0 = data_structure.version
+    data_structure.register("a", location="node")
+    data_structure.set("a", 1.)
+    assert data_structure.version == v0 + 1
 
 
 def test_alias_resolves_to_the_source():
-    _, _, ds = seedling_ds()
-    ds.register("hexose", location="node", default=1.)
-    ds.alias("sugar", "hexose")
+    _, _, data_structure = seedling_ds()
+    data_structure.register("hexose", location="node", default=1.)
+    data_structure.alias("sugar", "hexose")
 
-    assert ds.get("sugar") is ds.get("hexose")
-    ds.set("sugar", 5.)
-    assert (ds.get("hexose") == 5.).all()
-    assert ds.location("sugar") == "node"
-    assert ds.aliases() == {"sugar": "hexose"}
+    assert data_structure.get("sugar") is data_structure.get("hexose")
+    data_structure.set("sugar", 5.)
+    assert (data_structure.get("hexose") == 5.).all()
+    assert data_structure.location("sugar") == "node"
+    assert data_structure.aliases() == {"sugar": "hexose"}
 
 
 def test_alias_rejects_cycles_and_shadowing():
-    _, _, ds = seedling_ds()
-    ds.register("a", location="node")
-    ds.register("b", location="node", default=1.)
-    ds.alias("x", "a")
+    _, _, data_structure = seedling_ds()
+    data_structure.register("a", location="node")
+    data_structure.register("b", location="node", default=1.)
+    data_structure.alias("x", "a")
     with pytest.raises(ValueError, match="cycle"):
-        ds.alias("a", "x")
+        data_structure.alias("a", "x")
     with pytest.raises(ValueError, match="b"):
-        ds.alias("b", "a")
+        data_structure.alias("b", "a")
 
 
 def test_grid_accessors():
-    grid = ArrayDataStructure(shape=(3, 2, 2), dx=0.1)
+    grid = ArrayDataStructure(shape=(3, 2, 2), spacing=0.1)
     grid.register("T", default=10.)
     view = grid.get("T")
     grid.set("T", np.full((3, 2, 2), 12.))
@@ -315,10 +305,10 @@ def test_compartment_and_connection_labels_are_distinct():
 
 
 def test_a_grid_gives_its_cell_sizes():
-    grid = ArrayDataStructure(shape=(2, 3, 4), dx=(0.1, 0.2, 0.05))
-    np.testing.assert_array_equal(grid.dx, [0.1, 0.2, 0.05])
-    grid.dx[0] = 9.                                                       # a copy
-    assert grid.dx[0] == 0.1
+    grid = ArrayDataStructure(shape=(2, 3, 4), spacing=(0.1, 0.2, 0.05))
+    np.testing.assert_array_equal(grid.spacing, [0.1, 0.2, 0.05])
+    grid.spacing[0] = 9.                                                       # a copy
+    assert grid.spacing[0] == 0.1
 
 
 def test_a_scalar_is_written_from_a_one_value_array():

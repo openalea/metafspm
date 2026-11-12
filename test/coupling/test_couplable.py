@@ -36,7 +36,7 @@ def test_missing_metadata_is_reported():
         undocumented: float = field(default=0.)
 
     problems = couplability_problems(PlantCarbon, Translator())
-    assert problems == ["PlantCarbon.undocumented has no declare() metadata (variable_type, by, unit, ...)"]
+    assert problems == ["PlantCarbon.undocumented has no declare() metadata (role, by, unit, ...)"]
 
 
 def test_component_known_by_another_name():

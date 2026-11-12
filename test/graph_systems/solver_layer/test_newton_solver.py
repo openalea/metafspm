@@ -9,7 +9,7 @@ Concerns:
   2. Linear 2-node convergence: A x = b
   3. FD Jacobian (method='newton_fd') agrees with analytic Jacobian
   4. Linesearch: linesearch=True still converges
-  5. Non-convergence raises AssertionError
+  5. Non-convergence raises SolverConvergenceError
   6. step_once returns 1-D ndarray with correct shape
   7. prev_fields and dt are ignored (quasi-static)
 """
@@ -17,7 +17,7 @@ Concerns:
 import numpy as np
 import pytest
 
-from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, make_solver
+from openalea.metafspm.solve.solver import NewtonSolver, SolverConfig, SolverConvergenceError, _make_solver
 from solver_specs import build_spec_nonlinear_1node, build_spec_linear_2node
 
 
@@ -63,21 +63,21 @@ def test_newton_linear_2node_from_nonzero_init():
 # ── 3. FD Jacobian ────────────────────────────────────────────────────────────
 
 def test_newton_fd_scalar_converges(spec_nonlinear_1node):
-    solver = make_solver("newton_fd")
+    solver = _make_solver("newton_fd")
     x_new  = solver.step_once(spec_nonlinear_1node)
     np.testing.assert_allclose(x_new, [2.0], atol=1e-6)
 
 
 def test_newton_fd_agrees_with_analytic(spec_nonlinear_1node):
     s_analytic = NewtonSolver(SolverConfig(method="newton"))
-    s_fd       = make_solver("newton_fd")
+    s_fd       = _make_solver("newton_fd")
     x_analytic = s_analytic.step_once(spec_nonlinear_1node)
     x_fd       = s_fd.step_once(spec_nonlinear_1node)
     np.testing.assert_allclose(x_analytic, x_fd, atol=1e-6)
 
 
 def test_newton_fd_linear_2node_converges(spec_linear_2node):
-    solver = make_solver("newton_fd")
+    solver = _make_solver("newton_fd")
     x_new  = solver.step_once(spec_linear_2node)
     np.testing.assert_allclose(x_new, [1.6, 1.8], atol=1e-6)
 
@@ -101,18 +101,26 @@ def test_newton_linesearch_same_result_as_without(spec_nonlinear_1node):
     )
 
 
-# ── 5. Non-convergence raises AssertionError ─────────────────────────────────
+# ── 5. Non-convergence raises SolverConvergenceError ─────────────────────────
 
 def test_newton_non_convergence_raises(spec_nonlinear_1node):
-    solver = NewtonSolver(SolverConfig(max_iter=1, tol=1e-15))
-    with pytest.raises(AssertionError, match="Newton did not converge"):
+    solver = NewtonSolver(SolverConfig(max_iterations=1, absolute_tolerance=1e-15))
+    with pytest.raises(SolverConvergenceError, match="Newton did not converge"):
         solver.step_once(spec_nonlinear_1node)
 
 
 def test_newton_non_convergence_message_has_residual(spec_nonlinear_1node):
-    solver = NewtonSolver(SolverConfig(max_iter=1, tol=1e-15))
-    with pytest.raises(AssertionError, match=r"\|\|R\|\|"):
+    solver = NewtonSolver(SolverConfig(max_iterations=1, absolute_tolerance=1e-15))
+    with pytest.raises(SolverConvergenceError, match=r"\|\|R\|\|"):
         solver.step_once(spec_nonlinear_1node)
+
+
+def test_newton_relative_tolerance_stops_once_the_residual_fell_enough(spec_nonlinear_1node):
+    with pytest.raises(SolverConvergenceError):
+        NewtonSolver(SolverConfig(max_iterations=3, absolute_tolerance=1e-15)).step_once(spec_nonlinear_1node)
+    x_new = NewtonSolver(SolverConfig(max_iterations=3, absolute_tolerance=1e-15, relative_tolerance=1e-2)).step_once(spec_nonlinear_1node)
+    first = np.linalg.norm(spec_nonlinear_1node.residual(spec_nonlinear_1node.pack_unknowns(), None, None), np.inf)
+    assert np.linalg.norm(spec_nonlinear_1node.residual(x_new, None, None), np.inf) < 1e-2 * first
 
 
 # ── 6. Interface: step_once returns correct ndarray ──────────────────────────
@@ -151,6 +159,65 @@ def test_newton_ignores_prev_fields(spec_nonlinear_1node):
 
 def test_newton_ignores_dt(spec_nonlinear_1node):
     solver      = NewtonSolver()
-    x_no_dt     = solver.step_once(spec_nonlinear_1node, dt=None)
-    x_with_dt   = solver.step_once(spec_nonlinear_1node, dt=0.001)
+    x_no_dt     = solver.step_once(spec_nonlinear_1node, step_duration=None)
+    x_with_dt   = solver.step_once(spec_nonlinear_1node, step_duration=0.001)
     np.testing.assert_allclose(x_no_dt, x_with_dt, atol=1e-8)
+
+
+# ── 8. The step criterion (step_tolerance) ─────────────────────────────────────────
+
+class _DenseSystem:
+    """R(x) = residual(x), J = jacobian(x): a duck-typed spec for NewtonSolver._integrate_step, counting the
+    Jacobians (the iterations)."""
+
+    def __init__(self, residual, jacobian):
+        self._residual, self._jacobian, self.iterations = residual, jacobian, 0
+
+    def residual(self, x, prev_fields=None, h=None):
+        return self._residual(x)
+
+    def jacobian(self, x, prev_fields=None, h=None):
+        self.iterations += 1
+        return self._jacobian(x)
+
+
+def _scaled_linear(scale=1e6):
+    """A linear system scaled to 1e6, its solution of order 1e4, its residual's round-off made explicit: a
+    deterministic noise of 1e-6 (about eps ||J|| ||x||) changing with every bit of x, as A x - b's round-off does on
+    most BLAS (some, as macOS Accelerate's, give this small product exactly, its residual 0)."""
+    rng = np.random.default_rng(0)
+    A = scale * (np.eye(6) * 4. + rng.uniform(-1., 1., (6, 6)))
+    b = A @ rng.uniform(5e3, 1e4, 6)                      # the solution of order 1e4 (a potential in hPa)
+    round_off = lambda x: 1e-6 * np.cos(1e12 * x)        # noqa: E731
+    return _DenseSystem(lambda x: A @ x - b + round_off(x), lambda x: A), np.linalg.solve(A, b)
+
+
+def test_a_linear_system_below_its_residual_floor_converges_on_its_step():
+    """A linear system scaled to 1e6, its solution of order 1e4: its residual's round-off floor (~eps ||J|| ||x||)
+    is far above tolerance=1e-12, so the residual test never holds; the step test stops at the second iteration."""
+    system, solution = _scaled_linear()
+    x, _ = NewtonSolver(SolverConfig(absolute_tolerance=1e-12, max_iterations=10))._integrate_step(system, 0., np.zeros(6), 1., {})
+    assert system.iterations == 2
+    np.testing.assert_allclose(x, solution, rtol=1e-12)
+    assert np.linalg.norm(system.residual(x), np.inf) > 1e-12          # the residual test alone would not stop
+
+
+def test_without_the_step_test_the_floor_raises_with_its_history():
+    system, _ = _scaled_linear()
+    with pytest.raises(SolverConvergenceError, match=r"(?s)residuals .*round-off floor .*eps \|\|J\|\|inf"):
+        NewtonSolver(SolverConfig(absolute_tolerance=1e-12, max_iterations=4, step_tolerance=0.))._integrate_step(system, 0., np.zeros(6), 1., {})
+    assert system.iterations == 4
+
+
+def test_a_diverging_system_still_raises():
+    """R(x) = x² + 1 has no root: Newton's steps never vanish, the step test does not stop it."""
+    system = _DenseSystem(lambda x: x ** 2 + 1., lambda x: np.diag(2. * x))
+    with pytest.raises(SolverConvergenceError, match="did not converge"):
+        NewtonSolver(SolverConfig(max_iterations=30))._integrate_step(system, 0., np.array([0.3]), 1., {})
+
+
+def test_the_graph_system_option_reaches_the_solver():
+    from openalea.metafspm.solve.decorator import graph_system
+    descriptor = graph_system(node_unknowns=["u"], step_tolerance=1e-8)(type("_system", (), {}))
+    assert descriptor._spec["step_tolerance"] == 1e-8
+    assert graph_system(node_unknowns=["u"])(type("_system", (), {}))._spec["step_tolerance"] == 1e-10

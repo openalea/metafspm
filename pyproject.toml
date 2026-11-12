@@ -18,10 +18,11 @@ include-package-data = false # force explicit declaration of data (disable autom
 [project]
 name = "openalea.metafspm"
 authors = [
-  { name = "Tristan Gérault", email = "tristan.gerault@inrae.fr" },
-  { name = "Christophe Pradal", email = "christophe.pradal@cirad.fr" }
+  { name = "Tristan Gérault", email = "tristan.gerault@uclouvain.be" },
+  { name = "Christophe Pradal", email = "christophe.pradal@cirad.fr" },
+  { name = "Fabrice Bauget" },
 ]
-description = "Generic Management of FSPM dynamic processes and scheduling for OpenAlea"
+description = "Minimal tools for functional-structural plant modellers (FSPM) to write readable models and couple them in OpenAlea around a Multiscale Tree Graph (MTG)"
 readme = "README.md"
 license = "CECILL-C"
 license-files = ["LICEN[CS]E*"]
@@ -60,7 +61,8 @@ dependencies = [
     "numba",
     "pandas",
     "scipy",
-    "openalea.fspm_tf",   # the fspm-TF exchange format (io.fspm_tf); in development: pip install -e ../fspm-TF
+    "threadpoolctl",        # Compute's threads (the BLAS libraries' thread pools)
+    "openalea.encoding3d",   # the encoding3d exchange format (io.encoding3d); in development: pip install -e ../encoding3d
 ]
 
 [project.optional-dependencies]
@@ -70,6 +72,15 @@ test = [
 dev = [
   "pytest >=6",
   "pytest-cov >=3",
+]
+
+# optional sparse solvers of the graph systems' linear steps, registered when importable (Compute(linear_solver=));
+# python-mumps has no wheel: conda install -c conda-forge python-mumps (pip builds MUMPS from source)
+pardiso = [
+  "pypardiso",
+]
+mumps = [
+  "python-mumps",
 ]
 
 doc = [
@@ -84,7 +95,7 @@ doc = [
 ]
 
 [project.urls]
-Repository = "https://github.com/openalea/metafpsm"
+Repository = "https://github.com/openalea/metafspm"
 Homepage = "https://metafspm.readthedocs.io/"
 "Bug Tracker" = "https://github.com/openalea/metafspm/issues"
 Discussions = "https://github.com/openalea/metafspm/discussions"

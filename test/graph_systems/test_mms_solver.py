@@ -27,7 +27,7 @@ from openalea.metafspm.solve.system_specs import (
     GraphView,
     UnknownLayout,
 )
-from openalea.metafspm.solve.solver import SolverSpec
+from openalea.metafspm.solve.solver import SolverConfig
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -102,8 +102,8 @@ def _linear_mms_system(N, alpha=1.0, method="newton", linesearch=False):
     A      = L + alpha * np.eye(N)
     f_star = A @ u_star
 
-    def ev(ctx, _A=A, _f=f_star):
-        return _A @ ctx.node_unknowns["u"] - _f
+    def ev(context, _A=A, _f=f_star):
+        return _A @ context.node_unknowns["u"] - _f
 
     system = GraphSystem(
         graph=gv,
@@ -111,33 +111,8 @@ def _linear_mms_system(N, alpha=1.0, method="newton", linesearch=False):
         edge_fields={},
         boundary_ports=(),
         unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-        solver=SolverSpec(method=method, tol=1e-10, max_iter=100, linesearch=linesearch),
+        solver=SolverConfig(method=method, absolute_tolerance=1e-10, max_iterations=100, linesearch=linesearch),
         equation_blocks=(EquationBlock(name="balance", evaluator=ev),),
-        parameters={},
-    )
-    return system, u_star
-
-
-def _linear_mms_direct(N, alpha=1.0):
-    """Same MMS problem via the linear-assembly path (matrix_evaluator / rhs_evaluator)."""
-    gv, L  = _ring_chord_graph(N)
-    u_star = np.cos(2 * np.pi * np.arange(N) / N)
-    A_sp   = csr_matrix(L + alpha * np.eye(N))
-    f_star = A_sp @ u_star
-
-    def matrix_ev(ctx, _A=A_sp): return _A
-    def rhs_ev(ctx, _f=f_star):  return _f
-
-    system = GraphSystem(
-        graph=gv,
-        node_fields={"u": FieldState("u", "node", np.zeros(N))},
-        edge_fields={},
-        boundary_ports=(),
-        unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-        solver=SolverSpec(method="linear_direct", tol=1e-10),
-        equation_blocks=(),
-        matrix_evaluator=matrix_ev,
-        rhs_evaluator=rhs_ev,
         parameters={},
     )
     return system, u_star
@@ -153,8 +128,8 @@ def _nonlinear_mms_system(N, alpha=1.0, Vmax=0.5, Km=2.0, method="newton", lines
     u_star = np.cos(2 * np.pi * np.arange(N) / N) + 3.0
     f_star = L @ u_star + alpha * u_star + Vmax * u_star / (Km + u_star)
 
-    def ev(ctx, _L=L, _f=f_star):
-        u = ctx.node_unknowns["u"]
+    def ev(context, _L=L, _f=f_star):
+        u = context.node_unknowns["u"]
         return _L @ u + alpha * u + Vmax * u / (Km + u) - _f
 
     system = GraphSystem(
@@ -163,7 +138,7 @@ def _nonlinear_mms_system(N, alpha=1.0, Vmax=0.5, Km=2.0, method="newton", lines
         edge_fields={},
         boundary_ports=(),
         unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-        solver=SolverSpec(method=method, tol=1e-8, max_iter=100, linesearch=linesearch),
+        solver=SolverConfig(method=method, absolute_tolerance=1e-8, max_iterations=100, linesearch=linesearch),
         equation_blocks=(EquationBlock(name="balance", evaluator=ev),),
         parameters={},
     )
@@ -191,7 +166,7 @@ def test_p1_jac_sparsity_matrix_shape():
         edge_fields={},
         boundary_ports=(),
         unknowns=UnknownLayout(node_fields=("a", "b"), edge_fields=()),
-        solver=SolverSpec(method="newton"),
+        solver=SolverConfig(method="newton"),
         equation_blocks=(),
         parameters={},
     )
@@ -238,10 +213,10 @@ def test_p1_sparse_jacobian_newton_step():
         edge_fields={},
         boundary_ports=(),
         unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-        solver=SolverSpec(method="newton", tol=1e-10),
+        solver=SolverConfig(method="newton", absolute_tolerance=1e-10),
         equation_blocks=(),
-        matrix_evaluator=lambda ctx, _A=A_sp: _A,
-        rhs_evaluator=lambda ctx, _f=f_star: _f,
+        matrix_evaluator=lambda context, _A=A_sp: _A,
+        rhs_evaluator=lambda context, _f=f_star: _f,
         parameters={},
     )
     x = system.solve()
@@ -256,14 +231,11 @@ def test_p1_sparse_jacobian_newton_step():
 
 def test_p1_mms_linear_cross_solver():
     """
-    All six solver paths recover u*(i) = cos(2πi/N) on the ring-with-chord
+    Every solver path recovers u*(i) = cos(2πi/N) on the ring-with-chord
     graph within tolerance.
     """
     N = 12
-
-    sys_ld, u_star = _linear_mms_direct(N)
-    np.testing.assert_allclose(sys_ld.solve(), u_star, atol=1e-8,
-                                err_msg="linear_direct MMS failed")
+    _, u_star = _linear_mms_system(N)
 
     for method in ("newton", "newton_fd", "scipy_krylov", "scipy_anderson", "scipy_hybr"):
         sys_m, _ = _linear_mms_system(N, method=method)
@@ -278,8 +250,6 @@ def test_p1_mms_linear_cross_solver_agreement():
     """
     N = 16
     results = {}
-    sys_ld, _ = _linear_mms_direct(N)
-    results["linear_direct"] = sys_ld.solve()
     for method in ("newton", "newton_fd", "scipy_krylov", "scipy_anderson"):
         sys_m, _ = _linear_mms_system(N, method=method)
         results[method] = sys_m.solve()
@@ -318,8 +288,8 @@ def test_p1_mms_graph_refinement_convergence():
         f_pde   = (1 + alpha) * np.cos(theta)
         A       = L + alpha * np.eye(N)
 
-        def ev(ctx, _A=A, _f=f_pde):
-            return _A @ ctx.node_unknowns["u"] - _f
+        def ev(context, _A=A, _f=f_pde):
+            return _A @ context.node_unknowns["u"] - _f
 
         system = GraphSystem(
             graph=gv,
@@ -327,7 +297,7 @@ def test_p1_mms_graph_refinement_convergence():
             edge_fields={},
             boundary_ports=(),
             unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-            solver=SolverSpec(method="newton", tol=1e-12),
+            solver=SolverConfig(method="newton", absolute_tolerance=1e-12),
             equation_blocks=(EquationBlock(name="b", evaluator=ev),),
             parameters={},
         )
@@ -410,10 +380,10 @@ def test_p1_scipy_hybr_uses_analytic_jacobian():
     A      = L + alpha * np.eye(N)
     f_star = A @ u_star
 
-    def ev(ctx, _A=A, _f=f_star):
-        return _A @ ctx.node_unknowns["u"] - _f
+    def ev(context, _A=A, _f=f_star):
+        return _A @ context.node_unknowns["u"] - _f
 
-    def jac_ev(ctx, _A=A):
+    def jac_ev(context, _A=A):
         return _A
 
     system = GraphSystem(
@@ -422,7 +392,7 @@ def test_p1_scipy_hybr_uses_analytic_jacobian():
         edge_fields={},
         boundary_ports=(),
         unknowns=UnknownLayout(node_fields=("u",), edge_fields=()),
-        solver=SolverSpec(method="scipy_hybr", tol=1e-10),
+        solver=SolverConfig(method="scipy_hybr", absolute_tolerance=1e-10),
         equation_blocks=(EquationBlock(name="balance", evaluator=ev),),
         jacobian_evaluator=jac_ev,
         parameters={},

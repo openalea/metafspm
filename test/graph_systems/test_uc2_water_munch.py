@@ -22,7 +22,7 @@ import numpy as np
 from dataclasses import dataclass
 from scipy.sparse import diags
 
-from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.coupling.component import FunctionalComponent, _declare
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
@@ -32,16 +32,16 @@ from openalea.metafspm.solve.decorator import graph_system, node_balance, graph_
 
 def _segment_chain(n_segments=3) -> MPGDataStructure:
     """MPGDataStructure of a chain of root segments (n nodes, n-1 edges), as the former 3-cell chain."""
-    g = MPG()
-    scale = g.scales.SubOrgan
-    anchor = g.scales.anchors[scale]
-    vid = g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)
+    mtg = MPG()
+    scale = mtg.scales.SubOrgan
+    anchor = mtg.scales.anchors[scale]
+    vid = mtg._add_system_root_at_scale(scale, label=mtg.labels.SubOrgan.RootSegment)
     for _ in range(n_segments - 1):
-        vid = g.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
-                                                                 label=g.labels.SubOrgan.RootSegment))
-    g.populate_graph(scale)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=scale)
+        vid = mtg.add_component_with_topo(anchor, vid, **PropsConfig(scale=scale, edge_type="<",
+                                                                 label=mtg.labels.SubOrgan.RootSegment))
+    mtg.populate_graph(scale)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=scale)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -51,7 +51,7 @@ def _segment_chain(n_segments=3) -> MPGDataStructure:
 class _WaterBalances:
     @node_balance(field="xylem_pressure")
     def _xylem_balance(self, xylem_pressure, phloem_pressure, K_xylem, sigma_xph, sigma_soil, soil_water_potential):
-        B   = self._graph_view.incidence
+        B   = self.graph_view.incidence
         L_x = B @ diags(K_xylem) @ B.T
         return (np.asarray(L_x @ xylem_pressure).reshape(-1)
                 + sigma_xph * (xylem_pressure - phloem_pressure)
@@ -59,7 +59,7 @@ class _WaterBalances:
 
     @node_balance(field="phloem_pressure")
     def _phloem_balance(self, xylem_pressure, phloem_pressure, K_phloem, sigma_xph, phloem_assimilate_loading):
-        B    = self._graph_view.incidence
+        B    = self.graph_view.incidence
         L_ph = B @ diags(K_phloem) @ B.T
         return (np.asarray(L_ph @ phloem_pressure).reshape(-1)
                 - sigma_xph * (xylem_pressure - phloem_pressure)
@@ -69,10 +69,10 @@ class _WaterBalances:
 class _WaterBalancesWithJacobian(_WaterBalances):
     @graph_jacobian
     def _analytic_jacobian(self, K_xylem, K_phloem, sigma_xph, sigma_soil):
-        B    = self._graph_view.incidence
+        B    = self.graph_view.incidence
         L_x  = (B @ diags(K_xylem)  @ B.T).toarray()
         L_ph = (B @ diags(K_phloem) @ B.T).toarray()
-        n    = self._graph_view.n_nodes
+        n    = self.graph_view.n_nodes
         J    = np.zeros((2 * n, 2 * n))
         J[:n, :n] = L_x  + np.diag(sigma_xph + sigma_soil)
         J[:n, n:] = -np.diag(sigma_xph)
@@ -93,64 +93,64 @@ class WaterMunchTransport(FunctionalComponent):
         R_ph = L_ph p_ph - σ_xph (p_x - p_ph) - s_ph = 0
     """
 
-    xylem_pressure: float = declare(
+    xylem_pressure: float = _declare(
         unit="MPa", unit_comment="",
         description="Xylem water potential per segment node. Node unknown.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
-        variable_type="state_variable", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=-0.1, scale="node",
+        role="state_variable", by="WaterMunchTransport",
+        kind="intensive", default=-0.1, location="node",
     )
-    phloem_pressure: float = declare(
+    phloem_pressure: float = _declare(
         unit="MPa", unit_comment="",
         description="Phloem turgor pressure per segment node. Node unknown.",
         min_value=-1.0, max_value=2.0, value_comment="", references="", DOI=[],
-        variable_type="state_variable", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=0.8, scale="node",
+        role="state_variable", by="WaterMunchTransport",
+        kind="intensive", default=0.8, location="node",
     )
-    K_xylem: float = declare(
+    K_xylem: float = _declare(
         unit="m4 s-1 MPa-1", unit_comment="",
         description="Axial hydraulic conductance of xylem vessels per edge.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-10, scale="edge",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-10, location="edge",
     )
-    K_phloem: float = declare(
+    K_phloem: float = _declare(
         unit="m4 s-1 MPa-1", unit_comment="",
         description="Axial hydraulic conductance of phloem sieve tubes per edge.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-11, scale="edge",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-11, location="edge",
     )
-    sigma_xph: float = declare(
+    sigma_xph: float = _declare(
         unit="m3 s-1 MPa-1", unit_comment="radial, per segment",
         description="Radial membrane conductance between xylem and phloem per node.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-13, scale="node",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-13, location="node",
     )
-    sigma_soil: float = declare(
+    sigma_soil: float = _declare(
         unit="m3 s-1 MPa-1", unit_comment="radial, per segment",
         description="Radial soil-root conductance per node.",
         min_value=0.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="parameter", by="WaterMunchTransport",
-        state_variable_type="intensive", edit_by="dev", default=1e-12, scale="node",
+        role="parameter", by="WaterMunchTransport",
+        kind="intensive", default=1e-12, location="node",
     )
-    soil_water_potential: float = declare(
+    soil_water_potential: float = _declare(
         unit="MPa", unit_comment="",
         description="p_soil: prescribed soil water potential per node.",
         min_value=-5.0, max_value=0.5, value_comment="", references="", DOI=[],
-        variable_type="input", by="SoilWaterModel",
-        state_variable_type="intensive", edit_by="dev", default=-0.05, scale="node",
+        role="input_variable", by="SoilWaterModel",
+        kind="intensive", default=-0.05, location="node",
     )
-    phloem_assimilate_loading: float = declare(
+    phloem_assimilate_loading: float = _declare(
         unit="MPa s-1", unit_comment="",
         description="s_ph: osmotic source from assimilate loading per node.",
         min_value=-1.0, max_value=1.0, value_comment="", references="", DOI=[],
-        variable_type="input", by="CarbonModel",
-        state_variable_type="intensive", edit_by="dev", default=0.0, scale="node",
+        role="input_variable", by="CarbonModel",
+        kind="intensive", default=0.0, location="node",
     )
 
-    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iter=15)
+    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iterations=15)
     class _transport_solve(_WaterBalancesWithJacobian):
         pass
 
@@ -160,17 +160,17 @@ class WaterMunchFD(WaterMunchTransport):
     """The same balances with the finite-difference Jacobian (the inherited system is removed)."""
     steps_removed = ("transport_solve",)
 
-    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton_fd", max_iter=15)
+    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton_fd", max_iterations=15)
     class _transport_solve_fd(_WaterBalances):
         pass
 
 
 @dataclass
 class WaterMunchOneStep(WaterMunchTransport):
-    """The analytic Jacobian, with one Newton step and its convergence check (max_iter=2)."""
+    """The analytic Jacobian, with one Newton step and its convergence check (max_iterations=2)."""
     steps_removed = ("transport_solve",)
 
-    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iter=2)
+    @graph_system(node_unknowns=["xylem_pressure", "phloem_pressure"], solver="newton", max_iterations=2)
     class _transport_solve_one_step(_WaterBalancesWithJacobian):
         pass
 
@@ -180,7 +180,7 @@ class WaterMunchOneStep(WaterMunchTransport):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _setup_water_model(
-    ds, xylem_pressure, phloem_pressure,
+    data_structure, xylem_pressure, phloem_pressure,
     sigma_xph, sigma_soil, soil_water_potential,
     phloem_assimilate_loading, K_xylem, K_phloem, component_class=None,
 ):
@@ -189,15 +189,15 @@ def _setup_water_model(
                          ("sigma_xph", sigma_xph), ("sigma_soil", sigma_soil),
                          ("soil_water_potential", soil_water_potential),
                          ("phloem_assimilate_loading", phloem_assimilate_loading)):
-        ds.register(name, values, location="node")
-    ds.register("K_xylem", K_xylem, location="edge")
-    ds.register("K_phloem", K_phloem, location="edge")
-    return (component_class or WaterMunchTransport)(data_structure=ds)
+        data_structure.register(name, values, location="node")
+    data_structure.register("K_xylem", K_xylem, location="edge")
+    data_structure.register("K_phloem", K_phloem, location="edge")
+    return (component_class or WaterMunchTransport)(data_structure=data_structure)
 
 
-def _default_water_model(ds, component_class=None):
+def _default_water_model(data_structure, component_class=None):
     return _setup_water_model(
-        ds, component_class=component_class,
+        data_structure, component_class=component_class,
         xylem_pressure=np.array([-0.45, -0.32, -0.24]),
         phloem_pressure=np.array([0.04, 0.07, 0.10]),
         sigma_xph=np.array([0.12, 0.09, 0.07]),
@@ -213,10 +213,10 @@ def _default_water_model(ds, component_class=None):
 # Tests
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _residuals(ds):
+def _residuals(data_structure):
     """The xylem and phloem balances at the DataStructure's values, written by hand."""
-    B = ds.incidence_matrix().toarray()
-    get = lambda name: np.asarray(ds.get(name))
+    B = data_structure._incidence_matrix().toarray()
+    get = lambda name: np.asarray(data_structure.get(name))
     p_x, p_ph = get("xylem_pressure"), get("phloem_pressure")
     r_x = B @ (get("K_xylem") * (B.T @ p_x)) + get("sigma_xph") * (p_x - p_ph) \
         - get("sigma_soil") * (get("soil_water_potential") - p_x)
@@ -226,12 +226,12 @@ def _residuals(ds):
 
 def test_uc2_residual_and_munch_pressure_sign():
     """The coupled balances hold after the solve; xylem pressure is below phloem pressure."""
-    ds = _segment_chain()
-    assert (ds.n_nodes(), ds.n_edges()) == (3, 2)
-    _default_water_model(ds)()
-    for residual in _residuals(ds):
+    data_structure = _segment_chain()
+    assert (data_structure.n_nodes(), data_structure.n_edges()) == (3, 2)
+    _default_water_model(data_structure)()
+    for residual in _residuals(data_structure):
         np.testing.assert_allclose(residual, 0., atol=1e-10)
-    assert (np.asarray(ds.get("xylem_pressure")) < np.asarray(ds.get("phloem_pressure"))).all()
+    assert (np.asarray(data_structure.get("xylem_pressure")) < np.asarray(data_structure.get("phloem_pressure"))).all()
 
 
 def test_uc2_analytic_jacobian_gives_the_finite_difference_solution():
@@ -253,11 +253,11 @@ def test_uc2_analytical_limit_zero_coupling():
     Xylem decouples to (L_x + σ_s I) p_x = σ_s p0 · 1 whose unique solution
     is p_x = p0 (uniform, equal to soil potential).
     """
-    ds      = _segment_chain()
-    n       = ds.n_nodes()
+    data_structure      = _segment_chain()
+    n       = data_structure.n_nodes()
     p0      = -0.05
     model = _setup_water_model(
-        ds,
+        data_structure,
         xylem_pressure=np.full(n, p0 * 0.9),
         phloem_pressure=np.full(n, p0 * 0.9),
         sigma_xph=np.full(n, 1e-6),                       # near-zero coupling
@@ -268,4 +268,4 @@ def test_uc2_analytical_limit_zero_coupling():
         K_phloem=np.array([0.32, 0.22]),
     )
     model()
-    np.testing.assert_allclose(ds.get("xylem_pressure"), np.full(n, p0), atol=1e-4)
+    np.testing.assert_allclose(data_structure.get("xylem_pressure"), np.full(n, p0), atol=1e-4)

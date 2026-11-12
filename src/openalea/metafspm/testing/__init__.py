@@ -1,0 +1,76 @@
+"""
+Checks for downstream packages: run them in a package's own tests to make sure its components
+stay couplable with the translators it ships::
+
+  assert_component_couplable(RootCarbon, translator, data_structure=data_structure)
+
+The comparison tooling of the ports with their legacy (run_in_env, worktree, assert_arrays_equal, ...) is in
+testing.comparison; the radiosity corrections Caribu compares with, in testing.corrections.
+"""
+from dataclasses import fields
+
+# Framework fields that are not model variables
+_FRAMEWORK_FIELDS = {"data_structure", "time_step"}
+
+
+def couplability_problems(component_cls, translator, name: str = None, data_structure=None) -> list:
+    """
+    Problems preventing *component_cls* from being coupled through *translator* (a coupling.translator.Translator):
+
+      * a declared field without declare() metadata;
+      * a link whose receiving variable the component does not declare;
+      * a link reading a variable of the component that it does not declare;
+      * with a *data_structure*: a declaration that does not resolve on it (scale, location, mapping), and an
+        inconsistent DataStructure (DataStructure.validate).
+
+    *name* is the component name used in the translator (default: the class name).
+    """
+    name = name or component_cls.__name__
+    declared = {f.name: f for f in fields(component_cls) if f.name not in _FRAMEWORK_FIELDS}
+    problems = [f"{name}.{f.name} has no declare() metadata (role, by, unit, ...)"
+                for f in declared.values() if "role" not in f.metadata]
+    for link in translator.links:
+        if link.receiver == name and link.variable not in declared:
+            problems.append(f"{name}.{link.variable} is linked from {link.provider} but {name} does not declare it")
+        if link.provider == name:
+            for source in link.sources:
+                if source not in declared:
+                    problems.append(f"{link.receiver}.{link.variable} reads {name}.{source}, which {name} does not declare")
+    if data_structure is not None:
+        from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+        from openalea.metafspm.coupling.declaration import DeclarationError, _declared_specs, kinds_agree
+        try:
+            specs = _declared_specs(component_cls, data_structure)
+        except DeclarationError as error:
+            problems.append(str(error))
+            specs = {}
+        # Links into this component whose providers are already on the DataStructure: kinds and scale mappings
+        for link in translator.links:
+            spec = specs.get(link.variable)
+            if link.receiver != name or spec is None or not all(data_structure.has(source) for source in link.sources):
+                continue
+            for source in link.sources:
+                provided = data_structure._variable_meta().get(data_structure._resolve(source), {}).get("kind")
+                if not kinds_agree(spec.kind, provided):
+                    problems.append(f"{name}.{link.variable} ({spec.kind}) <- {link.provider}.{source} ({provided}): "
+                                    "the kinds do not agree")
+            if link.aggregation is None:
+                try:
+                    CompositeModel._default_link_mapping(data_structure, link, spec.location)
+                except DeclarationError as error:
+                    problems.append(str(error))
+        if hasattr(data_structure, "validate"):
+            try:
+                data_structure.validate()
+            except ValueError as error:
+                problems.append(str(error))
+    return problems
+
+
+def assert_component_couplable(component_cls, translator, name: str = None, data_structure=None) -> None:
+    """Raise AssertionError listing couplability_problems(...) when there are any: a port's test that its
+    components stay couplable with the translators it ships (and, with a *data_structure*, that their declarations
+    resolve on it)."""
+    problems = couplability_problems(component_cls, translator, name=name, data_structure=data_structure)
+    if problems:
+        raise AssertionError(f"{name or component_cls.__name__} is not couplable:\n  " + "\n  ".join(problems))

@@ -91,102 +91,116 @@ def test_extract_inject_state_roundtrip():
 # ── 2. ArrayDataStructure: shape and fields ───────────────────────────────────
 
 def test_array_shape_1d():
-    ds = ArrayDataStructure(shape=(5,))
-    assert ds.shape == (5,)
+    data_structure = ArrayDataStructure(shape=(5,))
+    assert data_structure.shape == (5,)
 
 
 def test_array_n_dof_1d():
-    ds = ArrayDataStructure(shape=(5,))
-    assert ds.n_dof == 5
+    data_structure = ArrayDataStructure(shape=(5,))
+    assert data_structure.n_dof == 5
 
 
 def test_array_n_dof_3d():
     """n_dof is the product of all shape dimensions."""
-    ds = ArrayDataStructure(shape=(2, 3, 4))
-    assert ds.n_dof == 24
+    data_structure = ArrayDataStructure(shape=(2, 3, 4))
+    assert data_structure.n_dof == 24
 
 
 def test_register_default_zeros():
-    ds = ArrayDataStructure(shape=(4,))
-    ds.register('temperature')
-    np.testing.assert_array_equal(ds.get('temperature'), np.zeros(4))
+    data_structure = ArrayDataStructure(shape=(4,))
+    data_structure.register('temperature')
+    np.testing.assert_array_equal(data_structure.get('temperature'), np.zeros(4))
 
 
 def test_register_with_values():
-    ds = ArrayDataStructure(shape=(3,))
-    ds.register('moisture', np.array([0.1, 0.2, 0.3]))
-    np.testing.assert_array_equal(ds.get('moisture'), [0.1, 0.2, 0.3])
+    data_structure = ArrayDataStructure(shape=(3,))
+    data_structure.register('moisture', np.array([0.1, 0.2, 0.3]))
+    np.testing.assert_array_equal(data_structure.get('moisture'), [0.1, 0.2, 0.3])
+
+
+# the grid's own variables: its geometric descriptors (data_api.GRID_DESCRIPTORS), a 1-D grid's along x
+GRID_GEOMETRY = {"face_area", "face_distance", "cell_volume", "cell_size_x", "cell_section_x", "boundary_low_x",
+                 "boundary_high_x", "face_normal_x"}
 
 
 def test_available_vars_empty():
-    ds = ArrayDataStructure(shape=(3,))
-    assert ds.available_vars() == []
+    data_structure = ArrayDataStructure(shape=(3,))
+    assert set(data_structure.available_vars()) == GRID_GEOMETRY
 
 
 def test_available_vars_after_add():
-    ds = ArrayDataStructure(shape=(3,))
-    ds.register('temperature')
-    ds.register('moisture')
-    assert set(ds.available_vars()) == {'temperature', 'moisture'}
+    data_structure = ArrayDataStructure(shape=(3,))
+    data_structure.register('temperature')
+    data_structure.register('moisture')
+    assert set(data_structure.available_vars()) == {'temperature', 'moisture'} | GRID_GEOMETRY
+
+
+def test_available_vars_include_edge_and_scalar_variables():
+    """Edge and scalar variables are listed too (export used to miss them)."""
+    data_structure = ArrayDataStructure(shape=(3,))
+    data_structure.register("flux", location="edge")
+    data_structure.register("total", location="scalar")
+    assert {"flux", "total"} <= set(data_structure.available_vars())
+    assert {"flux", "total"} <= set(data_structure._export())
 
 
 def test_get_missing_raises_key_error():
-    ds = ArrayDataStructure(shape=(3,))
+    data_structure = ArrayDataStructure(shape=(3,))
     with pytest.raises(KeyError, match="temperature"):
-        ds.get('temperature')
+        data_structure.get('temperature')
 
 
 def test_set_field_updates():
-    ds = ArrayDataStructure(shape=(3,))
-    ds.register('u')
-    ds.set('u', np.array([5.0, 6.0, 7.0]))
-    np.testing.assert_array_equal(ds.get('u'), [5.0, 6.0, 7.0])
+    data_structure = ArrayDataStructure(shape=(3,))
+    data_structure.register('u')
+    data_structure.set('u', np.array([5.0, 6.0, 7.0]))
+    np.testing.assert_array_equal(data_structure.get('u'), [5.0, 6.0, 7.0])
 
 
 # ── ArrayDataStructure: coordinates ──────────────────────────────────────────
 
 def test_coordinates_1d_shape():
-    ds = ArrayDataStructure(shape=(5,), dx=0.1)
-    coords = ds.coordinates()
+    data_structure = ArrayDataStructure(shape=(5,), spacing=0.1)
+    coords = data_structure.coordinates()
     assert coords.shape == (5, 1)
 
 
 def test_coordinates_1d_values():
-    ds = ArrayDataStructure(shape=(4,), dx=2.0)
-    coords = ds.coordinates()
+    data_structure = ArrayDataStructure(shape=(4,), spacing=2.0)
+    coords = data_structure.coordinates()
     np.testing.assert_allclose(coords[:, 0], [0.0, 2.0, 4.0, 6.0])
 
 
 def test_coordinates_1d_with_origin():
-    ds = ArrayDataStructure(shape=(3,), dx=1.0, origin=np.array([10.0]))
-    coords = ds.coordinates()
+    data_structure = ArrayDataStructure(shape=(3,), spacing=1.0, origin=np.array([10.0]))
+    coords = data_structure.coordinates()
     np.testing.assert_allclose(coords[:, 0], [10.0, 11.0, 12.0])
 
 
 def test_coordinates_3d_shape():
-    ds = ArrayDataStructure(shape=(2, 3, 4))
-    coords = ds.coordinates()
+    data_structure = ArrayDataStructure(shape=(2, 3, 4))
+    coords = data_structure.coordinates()
     assert coords.shape == (24, 3)
 
 
 # ── ArrayDataStructure: Laplacian ─────────────────────────────────────────────
 
 def test_laplacian_1d_is_sparse():
-    ds = ArrayDataStructure(shape=(5,), dx=1.0)
-    L = ds.laplacian()
+    data_structure = ArrayDataStructure(shape=(5,), spacing=1.0)
+    L = data_structure.laplacian()
     assert issparse(L)
 
 
 def test_laplacian_1d_shape():
-    ds = ArrayDataStructure(shape=(5,), dx=1.0)
-    L = ds.laplacian()
+    data_structure = ArrayDataStructure(shape=(5,), spacing=1.0)
+    L = data_structure.laplacian()
     assert L.shape == (5, 5)
 
 
 def test_laplacian_1d_row_sums_zero():
     """Neumann BC: all row sums are zero — null space contains constants."""
-    ds = ArrayDataStructure(shape=(6,), dx=1.0)
-    L = ds.laplacian()
+    data_structure = ArrayDataStructure(shape=(6,), spacing=1.0)
+    L = data_structure.laplacian()
     row_sums = np.asarray(L.sum(axis=1)).ravel()
     np.testing.assert_allclose(row_sums, np.zeros(6), atol=1e-12)
 
@@ -194,8 +208,8 @@ def test_laplacian_1d_row_sums_zero():
 def test_laplacian_1d_interior_diagonal():
     """Interior diagonal entries = -2 / h²."""
     h = 0.5
-    ds = ArrayDataStructure(shape=(5,), dx=h)
-    L = ds.laplacian().toarray()
+    data_structure = ArrayDataStructure(shape=(5,), spacing=h)
+    L = data_structure.laplacian().toarray()
     for i in [1, 2, 3]:
         assert L[i, i] == pytest.approx(-2.0 / h**2)
 
@@ -203,38 +217,38 @@ def test_laplacian_1d_interior_diagonal():
 def test_laplacian_1d_boundary_diagonal():
     """Neumann boundary diagonal entries = -1 / h² (one-sided stencil)."""
     h = 1.0
-    ds = ArrayDataStructure(shape=(4,), dx=h)
-    L = ds.laplacian().toarray()
+    data_structure = ArrayDataStructure(shape=(4,), spacing=h)
+    L = data_structure.laplacian().toarray()
     assert L[0, 0] == pytest.approx(-1.0 / h**2)
     assert L[-1, -1] == pytest.approx(-1.0 / h**2)
 
 
 def test_laplacian_1d_is_cached():
     """Second call returns the same object."""
-    ds = ArrayDataStructure(shape=(5,), dx=1.0)
-    L1 = ds.laplacian()
-    L2 = ds.laplacian()
+    data_structure = ArrayDataStructure(shape=(5,), spacing=1.0)
+    L1 = data_structure.laplacian()
+    L2 = data_structure.laplacian()
     assert L1 is L2
 
 
 # ── 3. ArrayDataStructure: extract_state / inject_state ──────────────────────
 
 def test_array_extract_inject_roundtrip_1d():
-    ds = ArrayDataStructure(shape=(4,))
-    ds.register('u', np.array([1.0, 2.0, 3.0, 4.0]))
-    x = ds.extract_state(['u'])
-    ds.inject_state(x * 3.0, ['u'])
-    np.testing.assert_array_equal(ds.get('u'), [3.0, 6.0, 9.0, 12.0])
+    data_structure = ArrayDataStructure(shape=(4,))
+    data_structure.register('u', np.array([1.0, 2.0, 3.0, 4.0]))
+    x = data_structure.extract_state(['u'])
+    data_structure.inject_state(x * 3.0, ['u'])
+    np.testing.assert_array_equal(data_structure.get('u'), [3.0, 6.0, 9.0, 12.0])
 
 
 def test_array_extract_inject_roundtrip_3d():
     """inject_state reshapes the flat vector back to the grid shape."""
-    ds = ArrayDataStructure(shape=(2, 3, 1))
+    data_structure = ArrayDataStructure(shape=(2, 3, 1))
     vals = np.arange(6, dtype=float).reshape(2, 3, 1)
-    ds.register('concentration', vals)
-    x = ds.extract_state(['concentration'])
+    data_structure.register('concentration', vals)
+    x = data_structure.extract_state(['concentration'])
     assert x.shape == (6,)
-    ds.inject_state(x * 2.0, ['concentration'])
-    np.testing.assert_array_equal(ds.get('concentration'), vals * 2.0)
+    data_structure.inject_state(x * 2.0, ['concentration'])
+    np.testing.assert_array_equal(data_structure.get('concentration'), vals * 2.0)
 
 

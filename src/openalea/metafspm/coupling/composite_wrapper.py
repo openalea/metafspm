@@ -1,77 +1,232 @@
-import os
+from contextvars import ContextVar
+from typing import Optional
 
-import yaml
-from dataclasses import fields
-from openalea.metafspm.coupling.translator import Translator
+from openalea.metafspm.coupling.declaration import check_link
+from openalea.metafspm.coupling.translator import Translator, _matches
 
 
 def _live_data_structure(component):
     """The component's DataStructure when it supports live reading (get/set/register), else None."""
-    ds = getattr(component, "data_structure", None)
-    return ds if (ds is not None and hasattr(ds, "register") and hasattr(ds, "get")) else None
+    data_structure = getattr(component, "data_structure", None)
+    return data_structure if (data_structure is not None and hasattr(data_structure, "register") and hasattr(data_structure, "get")) else None
+
+
+_NESTED = ContextVar("metafspm_nested_model", default=False)     # a model built as another's part
+
+
+class Part:
+    """A part built with constructor keywords (its settings at construction):
+    ``parts = {"hydraulics": Part(MechaHydraulics, soil_boundary="node_dirichlet")}``."""
+
+    def __init__(self, cls, **keywords):
+        self.cls, self.keywords = cls, keywords
+
+    def __repr__(self) -> str:
+        return f"Part({self.cls.__name__}, {', '.join(f'{k}={v!r}' for k, v in self.keywords.items())})"
 
 
 class CompositeModel:
+    """
+    A model: components sharing one DataStructure, declared as its parts and run by its schedule
+    (coupling.schedule)::
 
-    def get_documentation(self, filters: dict, models: list):
+        class WheatPlant(CompositeModel):
+            initiators = (WheatCrown, ScenarioShoot, RootArchitecture, GranapAnatomy)
+            parts = {"crown": WheatCrown, "shoot": ScenarioShoot, "rule": NodalRootEmergence, ...}
+            schedule = ("shoot", "rule", "roots", Step("anatomy", cadence="1 d"), ...)
+            translator = PLANT_TRANSLATOR
+
+    *parts* ({name: class, or Part(class, **keywords): a component built with constructor keywords}): the
+    components, or nested models (a CompositeModel: its parts become this model's
+    components, its schedule one step of this one's, its translator's links merged), built in order on the model's
+    DataStructure in its time step (a component class declaring its own time_step: in it, its sub-step), each the
+    model's attribute of its name; then coupled once: an input with the name of another
+    component's variable reads it (the DataStructure is the coupling); the translator's links state the rest, a
+    rename, a conversion factor, a change of scale or a formula. couplings() lists how each input is coupled.
+    *schedule* (coupling.schedule: part names, methods, Step, Together; default: the parts in order) is what run()
+    runs; steps() gives its steps bound, with their reads and writes. A model's own work besides its parts' (a mask
+    defined on its DataStructure) goes in its __init__, after super().__init__.
+
+    translator: the model's coupling contract (a class attribute, anything Translator.load reads): its links between
+    initiators apply while they build each plant (coupling.initiation). initiators: the StructuralComponents building
+    each plant, in order (a nested model's initiators where the model is named).
+
+    An environment model (scene.environment.EnvironmentModel) builds its components on its own DataStructures in its
+    __init__ (couple(), or its components list), its schedule naming them.
+    """
+    translator = None
+    parts = {}
+    schedule = None
+
+    def __init__(self, data_structure=None, time_step=None):
+        cls = type(self)
+        self.data_structure, self.time_step = data_structure, time_step
+        if data_structure is None:                  # a model given its components (couple: an environment model's)
+            if cls.parts:
+                raise TypeError(f"{cls.__name__}(): its parts are built on its DataStructure, give it")
+            self.components = []
+            return
+        components = []
+        for name, part in cls.parts.items():
+            keywords = {}
+            if isinstance(part, Part):
+                part, keywords = part.cls, part.keywords
+            if isinstance(part, type) and issubclass(part, CompositeModel):
+                token = _NESTED.set(True)
+                try:
+                    built = part(data_structure, time_step)
+                finally:
+                    _NESTED.reset(token)
+                components.extend(built.components)
+            elif getattr(part, "time_step", None) is not None:      # a component of its own (sub-)step
+                built = part(data_structure=data_structure, **keywords)
+                components.append(built)
+            else:
+                built = part(data_structure=data_structure, **{"time_step": time_step, **keywords})
+                components.append(built)
+            setattr(self, name, built)
+        if _NESTED.get():
+            self.components = components            # coupled by the model it is a part of
+        else:
+            self.couple(*components, translator=_merged_translator(cls))
+        self.steps()                                # its schedule checked now
+
+    @classmethod
+    def initiator_classes(cls) -> tuple:
+        """The model's initiators, a nested model's expanded into its own (in place)."""
+        found = []
+        for initiator in getattr(cls, "initiators", ()):
+            if isinstance(initiator, type) and issubclass(initiator, CompositeModel):
+                found.extend(initiator.initiator_classes())
+            else:
+                found.append(initiator)
+        return tuple(found)
+
+    def couple(self, *components, translator=None) -> None:
         """
-        Documentation of the declared variables of each model, one column per metadata key.
-        Fields without declare() metadata (e.g. FunctionalComponent.data_structure) are skipped.
-
-        :param filters: {metadata key: accepted values}, a field is listed only if it matches every filter.
-        :return: documentation text
+        The model's *components* coupled (a model's parts are, at its construction; an environment model couples
+        those it builds on its DataStructures): the links of *translator* (Translator.load: a Translator, a nested
+        dict, a .py module or a YAML file; None: the model's, else no link, every input shared by its name) between
+        them become aliases and derived variables on their DataStructure; links with components on other
+        DataStructures (the environment) are exchanged by the Scene (coupling.cross.Exchanges). Their DataStructures
+        are then checked (shapes, aliases, derivations).
         """
-        def cell(value, width=30):
-            text = "" if value is None else str(value)
-            if len(text) > width:
-                text = text[:width - 3] + "..."
-            return f"{text:<{width + 1}} | "
-
-        to_print = ""
-        for model in models:
-            to_print += "MODEL DOCUMENTATION : \n"
-            to_print += ("   no documentation" if model.__doc__ is None else model.__doc__) + "\n\n"
-            to_print += "MODEL OUTPUT VARIABLES : \n"
-
-            declared = [f for f in fields(model) if "variable_type" in f.metadata]
-            if len(declared) == 0:
-                continue
-            headers = list(declared[0].metadata.keys())
-            widths = {header: 90 if header == "description" else 30 for header in headers}
-            to_print += cell("name") + "".join(cell(header, widths[header]) for header in headers) + "\n\n"
-
-            for f in declared:
-                if all(f.metadata.get(k) in v for k, v in filters.items()):
-                    to_print += cell(f.name) + "".join(cell(f.metadata.get(header), widths[header]) for header in headers) + "\n"
-
-        return to_print
-
-    @property
-    def documentation(self):
-        return self.get_documentation(filters={}, models=getattr(self, "components", []))
-
-    @property
-    def inputs(self):
-        return self.get_documentation(filters=dict(variable_type=["input"]), models=getattr(self, "components", []))
-
-
-    def couple_components(self, *args, translator_path: str = ""):
-        """
-        Couple the DataStructure-backed components *args* through the translator at *translator_path*
-        (YAML or Python module): links between them become aliases and derived variables on their
-        DataStructure (see _couple_on_data_structures). Links with components on other DataStructures (the
-        environment) are exchanged by the Scene (coupling.cross.Exchanges).
-        """
-        self.components = [component for component in args]
+        self.components = list(components)
         for component in self.components:
             if _live_data_structure(component) is None:
                 raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
                                 "removed, see docs/migration.md")
+        self.translator = Translator.load(translator if translator is not None else type(self).translator)
+        self._couple_on_data_structures(self.translator)
+        checked = []
+        for component in self.components:
+            data_structure = component.data_structure
+            if hasattr(data_structure, "validate_variables") and not any(data_structure is other for other in checked):
+                data_structure.validate_variables()
+                checked.append(data_structure)
 
-        translator = self.open_or_create_translator(translator_path)
-        self._couple_on_data_structures(translator)
+    def steps(self) -> list:
+        """The model's schedule bound (coupling.schedule.ScheduledStep: name, form, components, stages, cadence,
+        reads, writes), the cadences its scenario's "cadence" sets included."""
+        steps = self.__dict__.get("_steps")
+        if steps is None:
+            from openalea.metafspm.coupling.schedule import bind
+            steps = self.__dict__["_steps"] = bind(self)
+        return steps
 
-    def _couple_on_data_structures(self, translator: dict) -> None:
+    def set_cadences(self, cadences) -> None:
+        """The cadences of the model's steps, {step name: duration, Cadence or None (every step)}: its scenario's
+        "cadence" key (a duration keeping the declared Cadence's "at")."""
+        if not isinstance(cadences, dict):
+            raise TypeError(f"{type(self).__name__}: its scenario's cadence is {{step name: duration}}, got "
+                            f"{cadences!r}")
+        self.__dict__["_cadences"] = {**self.__dict__.get("_cadences", {}), **cadences}
+        self.__dict__.pop("_steps", None)
+        self.steps()                                    # checked now: an unknown step raises
+
+    def run(self) -> None:
+        """One run of the model: its schedule's steps, in order, each component's clock at the run's start for each
+        of its steps (a component scheduled twice, for two stages, reads the step's forcings both times); the
+        components that ran counted once (Component.calls: the scene steps they ran in)."""
+        clocks = [(component, component.__dict__.get("_clock", 0.)) for component in self.components]
+        before = self.__dict__.get("_before_step")         # a Scene's fixed-point coupling (coupling.iteration)
+        for step in self.steps():
+            for component, clock in clocks:
+                component.__dict__["_clock"] = clock
+            if before is not None:
+                before(step)
+            step.run()
+        for component in self.components:
+            if component.__dict__.pop("_ran", False):
+                component.__dict__["_calls"] = component.__dict__.get("_calls", 0) + 1
+
+    def run_together(self, *components) -> None:
+        """
+        Call *components* as one: their steps in one schedule (each step group at its schedule position, the
+        components in the given order within a position), e.g. a development's potential lengths, the architecture's
+        segmentation, then the development's postsegmentation (the new organs' lengths) before the architecture's.
+        Each component's inputs are pulled first and its after-call work (write-back, clock, repartition) done last.
+        A schedule's Together(...) runs it; a model's method step (ScenarioShoot's grow) calls it.
+        """
+        _run_together(components or tuple(self.components), [None] * len(components or self.components))
+
+    def couplings(self):
+        """
+        A pandas DataFrame, one row per input of the coupled components: receiver, variable, provider and coupling,
+        "shared" (another component of the composite declares it: the same array), "alias" or "derived" (a link of
+        the translator: a rename, or a factor, change of scale or formula), "scene" (a link with a component on
+        another DataStructure, exchanged by the Scene), "planting" (a planting variable: planting_variable) or "not
+        provided" (its initial value, or what the Scene writes: a forcing, an event).
+        """
+        import pandas as pd
+        components = getattr(self, "components", [])
+        translator = getattr(self, "translator", None) or Translator()
+        scene = self.__dict__.get("_scene_translator")          # the Scene's links (with the environment models)
+        if scene is not None:
+            merged = Translator()
+            merged.links.extend(translator.links)
+            merged.links.extend(link for link in scene.links if link not in translator.links)
+            translator = merged
+        provided = {}
+        for component in components:
+            table = type(component).declarations()
+            if table.empty:
+                continue
+            for name in table.loc[~table["role"].isin(["input_variable", "parameter", "setting", "forcing_variable"]), "name"]:
+                provided.setdefault(name, type(component).__name__)
+        rows = []
+        for component in components:
+            receiver = type(component).__name__
+            table = type(component).declarations()
+            if table.empty:
+                continue
+            for name in table.loc[table["role"] == "geometry", "name"]:
+                rows.append(dict(receiver=receiver, variable=name, provider="the plants' structural components",
+                                 coupling="geometry", sources="triangles()"))
+            for name in table.loc[table["role"] == "input_variable", "name"]:
+                links = [link for link in translator.links if link.variable == name and _matches(link.receiver, component)
+                         and not _matches(link.provider, component)]
+                if links:
+                    link = links[0]
+                    coupling = "scene" if not any(_matches(link.provider, other) for other in components) \
+                        else link.coupling
+                    sources = ", ".join(f"{source}" if factor in (1, 1.) else f"{source} * {factor}"
+                                        for source, factor in link.sources.items()) if link.formula is None \
+                        else "formula"
+                    rows.append(dict(receiver=receiver, variable=name, provider=link.provider,
+                                     coupling=coupling, sources=sources))
+                elif name in provided and provided[name] != receiver:
+                    rows.append(dict(receiver=receiver, variable=name, provider=provided[name], coupling="shared",
+                                     sources=name))
+                elif _is_planting(type(component), name):
+                    rows.append(dict(receiver=receiver, variable=name, provider="Planting", coupling="planting",
+                                     sources=name))
+                else:
+                    rows.append(dict(receiver=receiver, variable=name, provider=None, coupling="not provided",
+                                     sources=None))
+        return pd.DataFrame(rows, columns=["receiver", "variable", "provider", "coupling", "sources"])
+
+    def _couple_on_data_structures(self, translator) -> None:
         """
         Coupling of DataStructure-backed components: links between components sharing a
         DataStructure become name-level aliases or derived variables refreshed by the receiver before its step;
@@ -79,228 +234,239 @@ class CompositeModel:
         by the Scene, not here.
         """
         by_name = {component.__class__.__name__: component for component in self.components}
-        links = translator.links if isinstance(translator, Translator) else Translator.from_dict(translator).links
-        for link in links:
+        for component in self.components:          # their links are this translator's: load_checkpoint keeps them
+            _base_of(component.data_structure).__dict__["_links_coupled"] = True
+        for link in Translator.load(translator).links:
             if link.receiver not in by_name or link.provider not in by_name or link.receiver == link.provider:
                 continue
             receiver, provider = by_name[link.receiver], by_name[link.provider]
-            ds = receiver.data_structure
-            if provider.data_structure is not ds:
+            # views of one DataStructure at the components' scales (LocatedView) are that DataStructure: linked on it,
+            # their locations named as there
+            data_structure = _base_of(receiver.data_structure)
+            if _base_of(provider.data_structure) is not data_structure:
                 raise NotImplementedError(f"{link.receiver}.{link.variable} <- {link.provider}: coupling across "
                                           "DataStructures goes through the Scene (coupling.cross.Exchanges)")
-            self._check_link_kinds(link, receiver, provider)
-            self._check_link_units(link, receiver, provider)
-            self._check_link_scales(link, ds)
+            link = check_link(link, receiver, provider)
+            link = self._geometric_sources(link, receiver, data_structure)
+            self._check_link_scales(link, data_structure)
             detail = link.mapped_detail
+            if link.names:                          # a receiver-private name: always the link's own variable
+                self._derive_private(link, receiver, data_structure)
+                continue
             if detail == "identity":
                 continue
-            crosses_locations = (detail == "alias" and ds.has(link.variable)
-                                 and ds.location(link.variable) != ds.location(next(iter(link.sources))))
+            crosses_locations = (detail == "alias" and data_structure.has(link.variable)
+                                 and data_structure.location(link.variable) != data_structure.location(next(iter(link.sources))))
             if detail == "alias" and not crosses_locations:
                 (source,) = link.sources
-                if ds.has(link.variable) and link.variable not in ds.aliases():
-                    ds.unregister(link.variable)
-                ds.alias(link.variable, source)
+                if data_structure.has(link.variable) and link.variable not in data_structure.aliases():
+                    data_structure.unregister(link.variable)
+                data_structure.alias(link.variable, source)
                 continue
             if detail == "same_name_factor":
                 raise ValueError(f"{link.receiver}.{link.variable} is linked to {link.provider}.{link.variable} with "
                                  f"factor {link.sources[link.variable]}: a same-name link within one data structure "
                                  "must have a factor of 1, rename the receiving variable")
-            location = ds.location(link.variable) if ds.has(link.variable) else None
+            location = data_structure.location(link.variable) if data_structure.has(link.variable) else self._receiving_location(link,
+                                                                                                         receiver, data_structure)
             aggregation, weight = link.aggregation, link.weight
             if location is not None and (aggregation is None or (weight is None and aggregation in
                                                                  ("weighted_mean", "split"))):
-                default, weight = self._default_link_mapping(ds, link, location)
+                default, weight = self._default_link_mapping(data_structure, link, location)
                 aggregation = aggregation or default
-            options = dict(location=location, aggregation=aggregation, weight=weight, target=link.target)
-            if link.target is not None and ds.has(link.variable):
-                options["default"] = ds._variable_meta().get(link.variable, {}).get("default", 0.)
+            options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target,
+                           missing=link.missing, default=self._receiving_default(link, receiver, data_structure))
             if link.formula is not None:
-                ds.derive(link.variable, link.sources, formula=link.formula, **options)
+                data_structure.derive(link.variable, link.sources, formula=link.formula, **options)
             else:
-                ds.derive(link.variable, dict(link.sources), **options)
+                data_structure.derive(link.variable, dict(link.sources), **options)
             derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
             if link.variable not in derived_inputs:
                 derived_inputs.append(link.variable)
 
-    @staticmethod
-    def _declared_kind(component, ds, name):
-        spec = getattr(component, "_variable_specs", {}).get(name)
-        if spec is not None and spec.kind is not None:
-            return spec.kind
-        return ds._variable_meta().get(name, {}).get("kind") if hasattr(ds, "_variable_meta") else None
-
-    def _check_link_kinds(self, link, receiver, provider) -> None:
-        """A receiver declaring a state_variable_type must agree with its provider's."""
-        from openalea.metafspm.coupling.declaration import kinds_agree
-        ds = receiver.data_structure
-        received = getattr(receiver, "_variable_specs", {}).get(link.variable)
-        received = received.kind if received is not None else None
+    def _geometric_sources(self, link, receiver, data_structure):
+        """The link with its geometric sources (coupling.geometry.FractionIn, CentreIn) replaced by the geometric
+        variables *data_structure* derives for them (DataStructure.derive_geometry), at the receiving location."""
+        from dataclasses import replace
+        from openalea.metafspm.coupling.geometry import GEOMETRIC_SOURCES
+        if not any(isinstance(source, GEOMETRIC_SOURCES) for source in link.sources):
+            return link
+        location = data_structure.location(link.variable) if data_structure.has(link.variable) else self._receiving_location(link, receiver,
+                                                                                                    data_structure)
+        renamed = {}
         for source in link.sources:
-            provided = self._declared_kind(provider, ds, source)
-            if not kinds_agree(received, provided):
-                raise ValueError(f"{link.receiver}.{link.variable} ({received}) <- {link.provider}.{source} "
-                                 f"({provided}): the kinds do not agree (extensive with extensive, intensive or "
-                                 "massic with intensive or massic)")
+            if isinstance(source, GEOMETRIC_SOURCES):
+                if not data_structure.has(source.name):
+                    data_structure.derive_geometry(source.name, source, location=location)
+                renamed[source] = source.name
+        if link.formula is not None:
+            return replace(link, sources=tuple(renamed.get(source, source) for source in link.sources))
+        return replace(link, sources={renamed.get(source, source): factor for source, factor in link.raw_factors.items()})
+
+    def _derive_private(self, link, receiver, data_structure) -> None:
+        """A link with a receiver-private name (Link.names): its values derived under that name, which the receiver
+        reads as its variable (DataStructure.private_names around its calls), with the variable's declared metadata;
+        the variable of that name the other components share untouched."""
+        private = link.private_name
+        if data_structure.has(private) and private not in data_structure.derived():
+            raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: its private name '{private}' is "
+                             "already a variable of the DataStructure")
+        location = data_structure.location(link.variable) if data_structure.has(link.variable) else self._receiving_location(link, receiver,
+                                                                                                    data_structure)
+        renamed = type(link)(link.receiver, private, link.provider, link.sources if link.formula is not None
+                             else link.raw_factors, scale=link.scale, source_scale=link.source_scale,
+                             aggregation=link.aggregation, weight=link.weight, target=link.target,
+                             formula=link.formula, unit_check=link.unit_check, missing=link.missing)
+        aggregation, weight = link.aggregation, link.weight
+        if location is not None and (aggregation is None or (weight is None and aggregation in
+                                                             ("weighted_mean", "split"))):
+            default, weight = self._default_link_mapping(data_structure, renamed, location)
+            aggregation = aggregation or default
+        options = dict(location=location, aggregation=aggregation, weight=weight, where=link.target,
+                       missing=link.missing, default=self._receiving_default(link, receiver, data_structure))
+        if link.formula is not None:
+            data_structure.derive(private, link.sources, formula=link.formula, **options)
+        else:
+            data_structure.derive(private, dict(link.sources), **options)
+        meta = data_structure._variable_meta()
+        declared = meta.get(data_structure._resolve(link.variable), {}) if data_structure.has(link.variable) else {}
+        meta.setdefault(private, {}).update({key: value for key, value in declared.items() if key != "derived"})
+        names = receiver.__dict__.setdefault("_private_names", {})
+        names[link.variable] = private
+        derived_inputs = receiver.__dict__.setdefault("_derived_inputs", [])
+        if private not in derived_inputs:
+            derived_inputs.append(private)
 
     @staticmethod
-    def _declared_unit(component, name):
-        f = getattr(type(component), "__dataclass_fields__", {}).get(name)
-        return None if f is None else f.metadata.get("unit")
-
-    def _check_link_units(self, link, receiver, provider) -> None:
-        """The declared units against the link's factors (coupling.units.check_link), unless unit_check is off or
-        the link is a formula."""
-        from openalea.metafspm.coupling.units import check_link
-        if link.formula is not None or not link.unit_check:
-            return
-        received = self._declared_unit(receiver, link.variable)
-        for source, factor in link.sources.items():
-            if not isinstance(factor, (int, float)):
-                continue                                   # an expression: its conversion is its own
-            check_link(received, self._declared_unit(provider, source), factor,
-                       f"{link.receiver}.{link.variable} <- {link.provider}.{source}")
+    def _receiving_location(link, receiver, data_structure) -> Optional[str]:
+        """
+        Where a link derives its receiving variable not yet on *data_structure* (an optional input nothing registered): the
+        link's scale, else the receiver's declaration (on the view it works on, named as on *data_structure*); both given, they
+        must agree. None when neither says (the sources' location).
+        """
+        from openalea.metafspm.coupling.declaration import location_of_scale
+        stated = location_of_scale(data_structure, link.scale) if link.scale is not None else None
+        spec = receiver.variable_specs.get(link.variable)
+        declared = None
+        if spec is not None:
+            declared, at = spec.location, receiver.data_structure.__dict__.get("_at")
+            if receiver.data_structure is not data_structure and at is not None and declared in (None, "node"):
+                declared = at                           # a view's nodes: the entities of its location (LocatedView)
+        if stated is not None and declared is not None and stated != declared:
+            raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states scale "
+                             f"{link.scale} ({stated}), but {link.receiver} declares it at {declared}")
+        return stated or declared
 
     @staticmethod
-    def _check_link_scales(link, ds) -> None:
+    def _receiving_default(link, receiver, data_structure) -> float:
+        """The receiving variable's default (its value without a provider): the receiver's declaration's, else what
+        *data_structure* holds of it, else 0."""
+        spec = receiver.variable_specs.get(link.variable)
+        default = spec.default if spec is not None else None
+        if default is None:
+            default = data_structure._variable_meta().get(data_structure._resolve(link.variable) if data_structure.has(link.variable) else link.variable,
+                                              {}).get("default")
+        try:
+            return 0. if default is None else float(default)
+        except (TypeError, ValueError):
+            return 0.
+
+    @staticmethod
+    def _check_link_scales(link, data_structure) -> None:
         """A link stating its scales must agree with the declared locations (the declarations rule)."""
         from openalea.metafspm.coupling.declaration import location_of_scale
         checks = [(link.variable, link.scale)] + [(source, link.source_scale) for source in link.sources]
         for name, scale in checks:
-            if scale is None or not ds.has(name):
+            if scale is None or not data_structure.has(name):
                 continue
-            expected, actual = location_of_scale(ds, scale), ds.location(name)
+            expected, actual = location_of_scale(data_structure, scale), data_structure.location(name)
             if expected != actual:
                 raise ValueError(f"{link.receiver}.{link.variable} <- {link.provider}: the link states that '{name}' "
                                  f"is at scale {scale} ({expected}), but it is declared at {actual}")
 
     @staticmethod
-    def _default_link_mapping(ds, link, location):
+    def _default_link_mapping(data_structure, link, location):
         """
         (mapping, weight) of a link between two locations that gives no aggregation (or a weighted one without its
-        weight), from its sources' state_variable_type; the weight is the link's, else the one declared on the
+        weight), from its sources' kind; the weight is the link's, else the one declared on the
         variable whose entities it weighs: the source's for a mean (up), the receiver's for a split (down).
         (None, the link's weight) when the locations are the same.
         """
-        from openalea.metafspm.coupling.declaration import DeclarationError, default_mapping, link_direction
-        source_locations = {ds.location(source) for source in link.sources}
+        from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation, _link_direction
+        source_locations = {data_structure.location(source) for source in link.sources}
         if len(source_locations) != 1 or location in source_locations:
             return None, link.weight
         (source_location,) = source_locations
         name = f"{link.receiver}.{link.variable} <- {link.provider}"
-        direction = link_direction(ds, source_location, location)
+        direction = _link_direction(data_structure, source_location, location)
         if direction is None:
             raise DeclarationError(f"{name}: from {source_location} to {location} has no default mapping, give "
                                    "aggregation=")
-        kinds = {ds._variable_meta().get(ds._resolve(source), {}).get("kind") for source in link.sources}
+        kinds = {data_structure._variable_meta().get(data_structure._resolve(source), {}).get("kind") for source in link.sources}
         if len(kinds) != 1:
             raise DeclarationError(f"{name}: its sources have different kinds {sorted(map(str, kinds))}, give "
                                    "aggregation=")
         (kind,) = kinds
         weight = link.weight
         if weight is None:
-            meta = ds._variable_meta()
-            weighed = [ds._resolve(source) for source in link.sources] if direction == "up" else [link.variable]
+            meta = data_structure._variable_meta()
+            weighed = [data_structure._resolve(source) for source in link.sources] if direction == "up" else [link.variable]
             declared = {meta.get(name_, {}).get("weight") for name_ in weighed}
             weight = declared.pop() if len(declared) == 1 else None
         try:
-            return default_mapping(kind, direction, name, weight=weight), weight
+            return default_aggregation(kind, direction, name, weight=weight), weight
         except DeclarationError as error:
             raise DeclarationError(f"{error} (link from {source_location} to {location})") from None
 
-    def open_or_create_translator(self, translator_path):
-        """
-        Translator from a YAML file, in the nested {receiver: {provider: {variable: {source: factor}}}} format, or
-        from a Python module defining ``translator = Translator(...)`` (.py), kept as a Translator so that its links'
-        options (aggregation, weight, target, formula, scales) are kept. A missing YAML file is built interactively
-        and written. A Translator or a nested dict given directly is used as is.
-        """
-        if isinstance(translator_path, (Translator, dict)):
-            return translator_path
-        if str(translator_path).endswith(".py"):
-            return Translator.from_module(str(translator_path))
-        if os.path.isdir(translator_path):              # Windows' open() raises PermissionError on a directory
-            raise IsADirectoryError(f"the translator path is a directory: {translator_path}")
-        try:
-            with open(translator_path, "r") as f:
-                translator = yaml.safe_load(f)
-        except FileNotFoundError:
-            print("NOTE : You will now have to provide information about shared variables between the modules composing this model :\n")
-            translator = self.translator_matrix_builder()
-            with open(translator_path, "w") as f:
-                yaml.dump(translator, f)
-        
-        return translator
 
-    def translator_matrix_builder(self):
-        """
-        Translator matrix builder utility, to be used if no translator dictionay is available on modules' directory
-
-        :param components: inistances of components that should be coupled as indicated by the coupling_translator.yaml
-        """
-        L = len(self.components)
-        translator = {self.components[i].__class__.__name__:{self.components[k].__class__.__name__:{} for k in range(L)} for i in range(L)}
-        for receiver_model in range(L):
-            # Fields without declare() metadata (e.g. FunctionalComponent.data_structure) are not variables
-            inputs = [f for f in fields(self.components[receiver_model]) if f.metadata.get("variable_type") == "input"]
-            needed_models = list(set([f.metadata["by"] for f in inputs]))
-            needed_models.sort()
-            for name in needed_models:
-                print([(model + 1, self.components[model].__class__.__name__) for model in range(len(self.components))])
-                which = int(input(f"[for {self.components[receiver_model].__class__.__name__}] Which is {name}? (0 for None): ")) - 1
-                needed_inputs = [f.name for f in inputs if f.metadata["by"] == name]
-                if 0 <= which < L:
-                    available = self.get_documentation(filters=dict(variable_type=["state_variable", "plant_scale_state"]), models=[self.components[which]])
-                    print(available)
-                    for var in needed_inputs:
-                        selected = input(f"For {var}, Nothing for same name / enter target names * conversion factor / Separate by ; -> ").split(";")
-                        com_dict = {}
-                        for expression in selected:
-                            if "*" in expression:
-                                l = expression.split("*")
-                                com_dict[l[0].replace(" ", "")] = float(l[1])
-                            elif expression.strip() == "":
-                                com_dict[var] = 1.
-                            else:
-                                com_dict[expression.replace(" ", "")] = 1.
-                        translator[self.components[receiver_model].__class__.__name__][self.components[which].__class__.__name__][var] = com_dict
-
-        return translator
-
-    def declare_data_and_couple_components(self, translator_path: str = "", components: tuple = ()):
-        """
-        Couple *components* through the translator at *translator_path* (couple_components), then check that
-        their DataStructures are consistent (shapes, aliases, derivations).
-        """
-        self.couple_components(translator_path=translator_path, *components)
-        # The coupled DataStructures must be consistent (shapes, aliases, derivations)
-        checked = []
-        for component in getattr(self, "components", ()):
-            ds = getattr(component, "data_structure", None)
-            if ds is not None and hasattr(ds, "validate_variables") and not any(ds is other for other in checked):
-                ds.validate_variables()
-                checked.append(ds)
+def _run_together(components, overrides) -> None:
+    """The components' steps in one schedule (CompositeModel.run_together), *overrides* their private names'."""
+    contexts = [component._before_call() for component in components]
+    with components[0].private_names(components[1:], overrides=overrides[0], component_overrides=overrides[1:]):
+        for component in components:
+            component.pull_available_inputs()
+        components[0].choregrapher.run_together(components)
+    for component, context in zip(components, contexts):
+        component._after_call(context)
+        component.__dict__["_ran"] = True
 
 
-    def apply_input_tables(self, tables: dict, to: tuple, when: float):
-        if tables is not None:
-            # Selection depends on the targeted models and the provided tables, recompute it when they change
-            selection_key = (tuple(id(model) for model in to), tuple(tables.keys()))
-            if getattr(self, "_models_data_required_key", None) != selection_key:
-                self._models_data_required_key = selection_key
-                all_available_state_variables = []
-                for model in to:
-                    all_available_state_variables += model.state_variables
-                self.models_data_required = [[var for var in tables.keys() if (
-                                                # Either the input is not provided by another coupled module
-                                                (var in model.inputs) and (var not in all_available_state_variables)) or (
-                                                # Or the considered model provides the variable but gets it from input data only
-                                                var in model.state_variables)]
-                                            for model in to]
+def _merged_translator(cls):
+    """The links of a model class's translator and of its nested models' (its parts' model classes, theirs too),
+    each once: the model's coupling contract (coupling, initiation)."""
+    merged = Translator()
+    translators = [Translator.load(cls.translator)] if getattr(cls, "translator", None) is not None else []
+    translators += [_merged_translator(part) for part in getattr(cls, "parts", {}).values()
+                    if isinstance(part, type) and issubclass(part, CompositeModel)]
+    for translator in translators:
+        for link in translator.links:
+            if link not in merged.links:
+                merged.links.append(link)
+    return merged
 
-            for model in range(len(to)):
-                for var in self.models_data_required[model]:
-                    if _live_data_structure(to[model]) is None:
-                        raise TypeError("Unknown data structure to apply input data to")
-                    # The table value applies to the whole variable
-                    to[model].data_structure.set(var, tables[var][when])
+
+def model_translator(model):
+    """A plant model class's coupling contract: its translator's links and its nested models' (a model without
+    parts, its translator)."""
+    if isinstance(model, type) and issubclass(model, CompositeModel):
+        return _merged_translator(model)
+    return getattr(model, "translator", None)
+
+
+def model_initiators(model) -> tuple:
+    """A plant model class's initiators, a nested model's expanded into its own."""
+    if isinstance(model, type) and issubclass(model, CompositeModel):
+        return model.initiator_classes()
+    return tuple(getattr(model, "initiators", ()))
+
+
+def _base_of(data_structure):
+    """The DataStructure a view (LocatedView) is of, or *data_structure* itself."""
+    return data_structure.__dict__.get("_base", data_structure)
+
+
+def _is_planting(cls, name) -> bool:
+    """Whether *name* is one of *cls*'s planting variables (planting_variable: an input by the planting)."""
+    from dataclasses import fields
+    field = next((f for f in fields(cls) if f.name == name), None)
+    return field is not None and field.metadata.get("by") == "Planting"

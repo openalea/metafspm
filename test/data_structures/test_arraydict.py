@@ -1,3 +1,4 @@
+import pytest
 from openalea.metafspm.data_structure.arraydict import ArrayDict  # adjust import to your file name
 
 # This test checks the invariance of ArrayDict operations
@@ -14,7 +15,7 @@ def test_arraydict():
 
     ad.assign_at([0, 2], [7, 8])  # value updates leave order intact
     ad.__delitem__(3)             # deletion
-    assert ad.check_invariant()   # confirms sorted order and mapping consistency
+    assert ad._check_invariant()   # confirms sorted order and mapping consistency
 
 
 def test_delete_many_equals_deleting_one_key_at_a_time():
@@ -34,6 +35,22 @@ def test_delete_many_equals_deleting_one_key_at_a_time():
     assert list(bulk)[:2] == [1, 3]
 
 
+def test_delete_range_equals_deleting_its_keys():
+    """delete_range(start, stop): the keys in [start, stop) gone (an instance's block of ids), as delete_many."""
+    import numpy as np
+    from openalea.metafspm.data_structure.arraydict import ArrayDict
+    keys = np.arange(0, 400, 3)
+    ranged, many = ArrayDict(), ArrayDict()
+    for d in (ranged, many):
+        d.update({int(k): float(k) / 2 for k in keys})
+    assert ranged.delete_range(100, 250) == many.delete_many(np.arange(100, 250))
+    assert list(ranged) == list(many) and ranged.values_array().tolist() == many.values_array().tolist()
+    assert ranged.delete_range(1000, 2000) == 0 and ranged.delete_range(5, 5) == 0
+    assert ranged[99] == many[99] and 102 not in ranged
+    ranged[101] = 1.                                            # inserts still keep the order
+    assert list(ranged)[list(ranged).index(99) + 1] == 101
+
+
 def test_bulk_construction_equals_inserting_each_key():
     import numpy as np
     from openalea.metafspm.data_structure.arraydict import ArrayDict
@@ -51,3 +68,42 @@ def test_bulk_construction_equals_inserting_each_key():
     bulk[1000] = 2.                                             # and it keeps working as an ArrayDict
     del bulk[keys[0]]
     assert bulk[1000] == 2. and keys[0] not in bulk
+
+
+def test_bulk_operations_hold_no_key_dict():
+    """Bulk writes and reads find keys by binary search: no dict of the keys until a key is used on its own."""
+    import numpy as np
+    keys = np.arange(0, 3000, 3)
+    d = ArrayDict.from_items(keys, keys / 2.)
+    d.scatter(keys[::5].tolist(), np.zeros(keys[::5].size))
+    d.insert_many(np.array([1, 4, 7000]), np.array([1., 4., 7.]))
+    d.update({10: 5., 9: 4.5})
+    assert d._index is None
+    assert 4 in d and 5 not in d and "x" not in d and d._index is None
+    assert d[4] == 4. and d.get(5) is None and d.get(7000) == 7. and d._index is None   # a few keys: searched
+    from openalea.metafspm.data_structure.arraydict import SEARCHES_BEFORE_INDEX
+    for _ in range(SEARCHES_BEFORE_INDEX):
+        assert d[4] == 4.
+    assert d._index is not None                               # many keys on their own: the dict, built once
+    d.insert_many(np.array([2]), np.array([2.]))               # the keys changed: searched again
+    assert d._index is None and d[2] == 2. and d._index is None
+    with pytest.raises(KeyError):
+        d[5]
+    assert d._check_invariant()
+
+
+def test_insert_many_equals_inserting_each_key():
+    import numpy as np
+    rng = np.random.default_rng(0)
+    existing = np.unique(rng.integers(0, 1000, 200))
+    new = np.setdiff1d(np.unique(rng.integers(0, 1200, 150)), existing)
+    rng.shuffle(new)
+    bulk = ArrayDict.from_items(existing, existing * 1.)
+    single = ArrayDict.from_items(existing, existing * 1.)
+    bulk.insert_many(new, new * 2.)
+    for k in new.tolist():
+        single[k] = k * 2.
+    assert list(bulk.items()) == list(single.items())
+    assert bulk._check_invariant() and single._check_invariant()
+    with __import__("pytest").raises(KeyError):
+        bulk.indices_of([-1])

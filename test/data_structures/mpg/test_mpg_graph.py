@@ -1,7 +1,7 @@
 """Tests for MPG node/edge population and transport-graph construction.
 
 populate_graph(from_scale) discovers ALL vertices at from_scale
-via post_order_mpg — no explicit vertex list required.  The seedling's g is
+via post_order_mpg — no explicit vertex list required.  The seedling's mtg is
 used directly; calling with SubOrgan discovers all 14 SubOrgan vertices:
   - shoot phytomer 1 : internodeelement (StemElement), leafelement1-3 (LeafElement)
   - shoot phytomer 2 : internodeelement2 (StemElement), leafelement4-6 (LeafElement)
@@ -19,7 +19,7 @@ Expected transport graph (13 edges, 14 nodes, single root = internodeelement):
 
 from simple_seedling import generate_simple_mpg_seedling
 
-g, seedling = generate_simple_mpg_seedling()
+mtg, seedling = generate_simple_mpg_seedling()
 
 internodeelement  = seedling.internodeelement
 internodeelement2 = seedling.internodeelement2
@@ -67,23 +67,23 @@ _EXPECTED_EDGES = {
     (root_segment5,     root_segment6),
 }
 
-g.populate_graph(g.scales.SubOrgan)
-g.convert_properties_to_arraydict()
+mtg.populate_graph(mtg.scales.SubOrgan)
+mtg.convert_properties_to_arraydict()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _node_vids():
     return [
-        v for v in g.components_at_scale(g.root, scale=g.scales.Compartment)
-        if not g.property('isanchor').get(v, False)
+        v for v in mtg.components_at_scale(mtg.root, scale=mtg.scales.Compartment)
+        if not mtg.property('isanchor').get(v, False)
     ]
 
 
 def _edge_vids():
     return [
-        v for v in g.components_at_scale(g.root, scale=g.scales.Connection)
-        if not g.property('isanchor').get(v, False)
+        v for v in mtg.components_at_scale(mtg.root, scale=mtg.scales.Connection)
+        if not mtg.property('isanchor').get(v, False)
     ]
 
 
@@ -95,14 +95,14 @@ def test_node_edge_population():
 
     nodes = _node_vids()
     assert len(nodes) == 14, f"expected 14 Compartment nodes, got {len(nodes)}"
-    vid_prop = g.property('vertex_id')
+    vid_prop = mtg.property('vertex_id')
     stored_vids = {int(vid_prop[nv]) for nv in nodes}
     assert stored_vids == _ALL_SUBORGAN, "every SubOrgan vertex must have exactly one node"
 
     edges = _edge_vids()
     assert len(edges) == 13, f"expected 13 Connection edges, got {len(edges)}"
-    n_id_a = g.property('n_id_a')
-    n_id_b = g.property('n_id_b')
+    n_id_a = mtg.property('n_id_a')
+    n_id_b = mtg.property('n_id_b')
     actual = {(int(n_id_a[ev]), int(n_id_b[ev])) for ev in edges}
     assert actual == _EXPECTED_EDGES, (
         f"edge connectivity mismatch"
@@ -115,8 +115,8 @@ def test_node_edge_population():
 
 def test_graph_visualization():
     """Print transport graph adjacency; assert key structural properties."""
-    n_id_a = g.property('n_id_a')
-    n_id_b = g.property('n_id_b')
+    n_id_a = mtg.property('n_id_a')
+    n_id_b = mtg.property('n_id_b')
 
     adj = {}
     for ev in _edge_vids():
@@ -179,7 +179,7 @@ def put_edges_on_existing_anatomy():
         g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Symplastic,    n_id_a=symplasm, n_id_b=phloem))
         g2.add_component_with_topo(edge_anchor, vid, **PropsConfig(scale=g2.scales.Connection, edge_type='/', label=g2.labels.Connection.Transmembrane, n_id_a=xylem,    n_id_b=phloem))
 
-    g2.populate_graph_custom_connections(
+    g2.wire_junctions(
         g2.scales.SubOrgan,
         [
             dict(node_label=g2.labels.Compartment.Symplastic, edge_label=g2.labels.Connection.Symplastic),
@@ -235,31 +235,29 @@ def test_ordered_connections():
     from openalea.metafspm.data_structure.configs import PropsConfig
 
     def _setup():
-        g, _ = generate_simple_mpg_seedling()
-        node_anchor = g.scales.anchors[g.scales.Compartment]
-        angle_p     = g.property('angle')
-        for vid in g.vertices(scale=g.scales.SubOrgan):
-            if g.property('isanchor').get(vid, False):
+        mtg, _ = generate_simple_mpg_seedling()
+        node_anchor = mtg.scales.anchors[mtg.scales.Compartment]
+        for vid in mtg.vertices(scale=mtg.scales.SubOrgan):
+            if mtg.property('isanchor').get(vid, False):
                 continue
-            nv_near = g.add_component_with_topo(node_anchor, vid, **PropsConfig(
-                scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
-            nv_far  = g.add_component_with_topo(node_anchor, vid, **PropsConfig(
-                scale=g.scales.Compartment, edge_type='/', label=g.labels.Cell.MetaXylem))
-            angle_p[nv_near] = 30.0
-            angle_p[nv_far]  = 150.0
-        return g
+            nv_near = mtg.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                scale=mtg.scales.Compartment, edge_type='/', label=mtg.labels.Cell.MetaXylem))
+            nv_far  = mtg.add_component_with_topo(node_anchor, vid, **PropsConfig(
+                scale=mtg.scales.Compartment, edge_type='/', label=mtg.labels.Cell.MetaXylem))
+            mtg.set_values('angle', [nv_near, nv_far], [30.0, 150.0])
+        return mtg
 
-    def _inter_edges(g):
-        n_a_p = g.property('n_id_a')
-        n_b_p = g.property('n_id_b')
-        return [ev for ev in g.components_at_scale(g.root, scale=g.scales.Connection)
-                if not g.property('isanchor').get(ev, False)
+    def _inter_edges(mtg):
+        n_a_p = mtg.property('n_id_a')
+        n_b_p = mtg.property('n_id_b')
+        return [ev for ev in mtg.components_at_scale(mtg.root, scale=mtg.scales.Connection)
+                if not mtg.property('isanchor').get(ev, False)
                 and ev in n_a_p and ev in n_b_p
-                and g.parent(int(n_a_p[ev])) != g.parent(int(n_b_p[ev]))]
+                and mtg.parent(int(n_a_p[ev])) != mtg.parent(int(n_b_p[ev]))]
 
     # ── Ordered: near↔near, far↔far ──────────────────────────────────────────
     g_ord = _setup()
-    g_ord.populate_graph_custom_connections(
+    g_ord.wire_junctions(
         g_ord.scales.SubOrgan,
         [dict(node_label=g_ord.labels.Cell.MetaXylem,
               edge_label=g_ord.labels.Connection.Apoplastic,
@@ -282,7 +280,7 @@ def test_ordered_connections():
 
     # ── All-to-all (no ordering): every pair among the 2 near/far nodes ───────
     g_all = _setup()
-    g_all.populate_graph_custom_connections(
+    g_all.wire_junctions(
         g_all.scales.SubOrgan,
         [dict(node_label=g_all.labels.Cell.MetaXylem,
               edge_label=g_all.labels.Connection.Apoplastic)],
@@ -305,7 +303,7 @@ if __name__ == "__main__":
     print("All tests passed.")
 
     # ── Node-creation mode ────────────────────────────────────────────────────
-    plot_mpg(g, "Node-creation mode (all SubOrgan)")
+    plot_mpg(mtg, "Node-creation mode (all SubOrgan)")
 
     # ── filter_out=StemElement ────────────────────────────────────────────────
     from simple_seedling import generate_simple_mpg_seedling as _gen
@@ -333,12 +331,11 @@ if __name__ == "__main__":
                 scale=g_x.scales.Compartment, edge_type='/', label=g_x.labels.Cell.MetaXylem))
             nv_far  = g_x.add_component_with_topo(node_anchor, vid, **PropsConfig(
                 scale=g_x.scales.Compartment, edge_type='/', label=g_x.labels.Cell.MetaXylem))
-            angle_p[nv_near] = 30.0
-            angle_p[nv_far]  = 150.0
+            mtg.set_values('angle', [nv_near, nv_far], [30.0, 150.0])
         return g_x
 
     g_ord = _xylem_setup()
-    g_ord.populate_graph_custom_connections(
+    g_ord.wire_junctions(
         g_ord.scales.SubOrgan,
         [dict(node_label=g_ord.labels.Cell.MetaXylem,
               edge_label=g_ord.labels.Connection.Apoplastic,
@@ -349,7 +346,7 @@ if __name__ == "__main__":
              node_property='angle')
 
     g_all = _xylem_setup()
-    g_all.populate_graph_custom_connections(
+    g_all.wire_junctions(
         g_all.scales.SubOrgan,
         [dict(node_label=g_all.labels.Cell.MetaXylem,
               edge_label=g_all.labels.Connection.Apoplastic)],

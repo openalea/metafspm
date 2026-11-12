@@ -10,23 +10,17 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
 from openalea.metafspm.coupling.component import FunctionalComponent, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import rate
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(1)
 
 
 @dataclass
 class Increment(FunctionalComponent):
-    level: float = state_variable(**DOC, initialize=0., location="cell")
+    level: float = state_variable(**DOC, default=0., location="cell")
 
     @rate
     def _level(self, level):
@@ -76,7 +70,7 @@ from openalea.metafspm.solve.decorator import rate
 @dataclass
 class Decay(FunctionalComponent):
     level: float = state_variable(unit="", unit_comment="", description="", min_value=0., max_value=1.,
-                                  value_comment="", references="", DOI=[], initialize=1., location="cell")
+                                  value_comment="", references="", DOI=[], default=1., location="cell")
 
     @rate
     def _level(self, level):
@@ -103,12 +97,12 @@ def test_same_named_classes_of_different_modules_do_not_collide():
 def test_classes_defined_in_a_function_are_scheduled():
     @dataclass
     class Local(FunctionalComponent):
-        level: float = state_variable(**DOC, initialize=0., location="cell")
+        level: float = state_variable(**DOC, default=0., location="cell")
 
         @rate
         def _level(self, level):
             return level + 5.
 
-    ds = _grid()
-    Local(data_structure=ds)()
-    np.testing.assert_array_equal(ds.get("level"), 5.)
+    data_structure = _grid()
+    Local(data_structure=data_structure)()
+    np.testing.assert_array_equal(data_structure.get("level"), 5.)

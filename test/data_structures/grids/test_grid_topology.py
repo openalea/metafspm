@@ -10,25 +10,25 @@ import pytest
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
 
 @pytest.mark.parametrize("shape, dx", [((5,), 0.1), ((4, 3), (0.1, 0.2)), ((4, 3, 2), (0.1, 0.2, 0.3)),
                                        ((6, 1, 1), 0.1), ((1, 4, 3), (0.1, 0.2, 0.3))])
 def test_the_face_graph_reproduces_the_finite_difference_laplacian(shape, dx):
-    grid = ArrayDataStructure(shape=shape, dx=dx)
-    B = grid.incidence_matrix().toarray()
-    g = grid.get("face_area") / grid.get("face_distance") / grid.cell_volume()
+    grid = ArrayDataStructure(shape=shape, spacing=dx)
+    B = grid._incidence_matrix().toarray()
+    mtg = grid.get("face_area") / grid.get("face_distance") / grid.cell_volume()
     L = grid.laplacian()
     L = L.toarray() if hasattr(L, "toarray") else np.asarray(L)
-    np.testing.assert_allclose(B @ np.diag(g) @ B.T, -L, rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(B @ np.diag(mtg) @ B.T, -L, rtol=1e-12, atol=1e-9)
 
 
 def test_faces_are_oriented_towards_increasing_coordinates():
     grid = ArrayDataStructure(shape=(3, 2, 2))
     cells = np.arange(12).reshape(3, 2, 2)
-    view = grid.topology()
+    view = grid.to_graph_view()
     for e, (tail, head) in enumerate(zip(view.tail, view.head)):
         a, b = np.argwhere(cells == tail)[0], np.argwhere(cells == head)[0]
         axis = grid.face_axis()[e]
@@ -43,7 +43,7 @@ def test_periodic_axes_add_wrap_faces():
     assert (axis == 1).sum() == 4 * 2 * 2 + 4 * 2
     assert (axis == 2).sum() == 4 * 3 * 1                  # z is not periodic
     cells = np.arange(24).reshape(4, 3, 2)
-    wraps = [(t, h) for t, h, a in zip(grid.topology().tail, grid.topology().head, axis)
+    wraps = [(t, h) for t, h, a in zip(grid.to_graph_view().tail, grid.to_graph_view().head, axis)
              if a == 0 and np.argwhere(cells == t)[0][0] == 3]
     assert len(wraps) == 6 and all(np.argwhere(cells == h)[0][0] == 0 for _, h in wraps)
     two = ArrayDataStructure(shape=(2, 1, 1), periodic=True)
@@ -51,7 +51,7 @@ def test_periodic_axes_add_wrap_faces():
 
 
 def test_face_geometry_and_layer_masks():
-    grid = ArrayDataStructure(shape=(2, 2, 3), dx=(0.1, 0.2, 0.5))
+    grid = ArrayDataStructure(shape=(2, 2, 3), spacing=(0.1, 0.2, 0.5))
     axis = grid.face_axis()
     np.testing.assert_allclose(grid.get("face_distance"), np.array([0.1, 0.2, 0.5])[axis])
     np.testing.assert_allclose(grid.get("face_area"), np.array([0.1, 0.05, 0.02])[axis])
@@ -64,16 +64,16 @@ def test_face_geometry_and_layer_masks():
 
 
 def test_locate_wraps_along_the_grid_periodic_axes_by_default():
-    grid = ArrayDataStructure(shape=(4, 4, 2), dx=1., periodic=(True, True, False))
+    grid = ArrayDataStructure(shape=(4, 4, 2), spacing=1., periodic=(True, True, False))
     assert grid.locate([[4.5, 0.5, 0.5]])[0] == grid.locate([[0.5, 0.5, 0.5]])[0]
-    flat = ArrayDataStructure(shape=(4, 4, 2), dx=1.)
+    flat = ArrayDataStructure(shape=(4, 4, 2), spacing=1.)
     assert flat.locate([[4.5, 0.5, 0.5]])[0] == flat.locate([[3.5, 0.5, 0.5]])[0]   # clipped, not wrapped
 
 
 
 @dataclass
 class FaceProbe(FunctionalComponent):
-    water: float = state_variable(**DOC, initialize=0.2, location="cell")
+    water: float = state_variable(**DOC, default=0.2, location="cell")
     conductivity: float = parameter(**DOC, by="", default=1e-3, location="edge")
 
 
@@ -87,7 +87,7 @@ def test_edge_declarations_register_on_the_faces():
 # ---------------------------------------------------------------- grid geometry, (x, y, z)
 
 def test_grid_axes_and_cell_geometry():
-    grid = ArrayDataStructure(shape=(4, 3, 2), dx=(0.1, 0.2, 0.5), origin=(1., 0., 0.))
+    grid = ArrayDataStructure(shape=(4, 3, 2), spacing=(0.1, 0.2, 0.5), origin=(1., 0., 0.))
     assert grid.axes == ("x", "y", "z")
     assert grid.cell_volume() == pytest.approx(0.01)
     centers = grid.cell_centers()
@@ -98,7 +98,7 @@ def test_grid_axes_and_cell_geometry():
 
 
 def test_grid_locate_points():
-    grid = ArrayDataStructure(shape=(4, 3, 2), dx=(0.1, 0.2, 0.5))
+    grid = ArrayDataStructure(shape=(4, 3, 2), spacing=(0.1, 0.2, 0.5))
     field = np.arange(24.).reshape(4, 3, 2)
     points = np.array([[0.05, 0.1, 0.25], [0.35, 0.45, 0.9], [0.45, 0.1, 0.1], [-0.05, 0.1, 0.1]])
 

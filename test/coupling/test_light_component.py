@@ -9,7 +9,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
+from openalea.metafspm.coupling.cadence import Cadence
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
+from openalea.metafspm.coupling.schedule import Step
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.scene.environment import EnvironmentModel
@@ -17,12 +20,12 @@ from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
 from growth import DOC, RootGrowthProbe
-from scene_doubles import DT, planting
+from scene_doubles import DT, doubles_planting
 
 GEOMETRY = ("x1", "x2", "y1", "y2", "z1", "z2", "radius")
 
 
-GEOMETRY_DOC = dict(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="descriptor", on_grow="inherit")
+GEOMETRY_DOC = dict(**DOC, default=0., scale=scales.SubOrgan, kind="descriptor", on_grow="inherit")
 
 
 @dataclass
@@ -34,7 +37,7 @@ class WheatOrgans(FunctionalComponent):
     z1: float = state_variable(**GEOMETRY_DOC)
     z2: float = state_variable(**GEOMETRY_DOC)
     radius: float = state_variable(**GEOMETRY_DOC)
-    absorbed: float = input_variable(**DOC, by="ToyCaribu", initialize=-1., scale=scales.SubOrgan)
+    absorbed: float = input_variable(**DOC, by="ToyCaribu", default=-1., scale=scales.SubOrgan)
 
 
 @dataclass
@@ -43,16 +46,16 @@ class PeaOrgans(WheatOrgans):
 
 
 def _plant_model(name, organs):
-    class Model:
+    class Model(CompositeModel):
         initiators = (RootGrowthProbe,)
 
-        def __init__(self, data_structure, time_step):
-            data_structure.register("radius", 0.05 if organs is WheatOrgans else 0.1, location="node")
-            self.organs = organs(data_structure=data_structure)
-            self.components = [self.organs]
+        parts = {"organs": organs}
+        schedule = ()
 
-        def run(self):
-            pass
+        def __init__(self, data_structure, time_step):
+            super().__init__(data_structure, time_step)
+            data_structure.register("radius", 0.05 if organs is WheatOrgans else 0.1, location="node")
+
     Model.__name__ = name
     return Model
 
@@ -83,14 +86,14 @@ def absorbed_light(tri, extinction=0.5, cell=1.):
 
 @dataclass
 class ToyCaribu(FunctionalComponent):
-    x1: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    x2: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    y1: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    y2: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    z1: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    z2: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    radius: float = input_variable(**DOC, by="WheatOrgans", initialize=0., scale=scales.SubOrgan)
-    absorbed: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, state_variable_type="intensive")
+    x1: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    x2: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    y1: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    y2: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    z1: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    z2: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    radius: float = input_variable(**DOC, by="WheatOrgans", default=0., scale=scales.SubOrgan)
+    absorbed: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="intensive")
 
     @rate
     def _absorbed(self, x1, x2, y1, y2, z1, z2, radius):
@@ -98,40 +101,35 @@ class ToyCaribu(FunctionalComponent):
 
 
 class ToyCaribuModel(EnvironmentModel):
-    """Runs every 4 steps (e.g. every 4 h); its outputs are kept in between."""
-    interval = 4 * DT
+    """Runs every 4 steps (e.g. every 4 h, its schedule's cadence); its outputs are kept in between."""
+    schedule = (Step("light", cadence=Cadence(4 * DT, at="start")),)
 
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        super().__init__(populations, scene_xrange, scene_yrange, time_step)
-        self.scene = self.plants()                          # the union of the two populations
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.scene = self.plant_data_structure()                          # the union of the two populations
         self.light = ToyCaribu(data_structure=self.scene)
         self.components = [self.light]
-        self.runs = 0
-
-    def full_run(self):
-        self.runs += 1
-        self.light()
 
 
 def _translator():
     translator = Translator()
     for organs in ("WheatOrgans", "PeaOrgans"):
-        for g in GEOMETRY:
-            translator.link("ToyCaribu", g, organs, {g: 1.})
+        for mtg in GEOMETRY:
+            translator.link("ToyCaribu", mtg, organs, {mtg: 1.})
         translator.link(organs, "absorbed", "ToyCaribu", {"absorbed": 1.})
     return translator
 
 
 
 def test_a_light_model_triangulates_the_populations_itself():
-    scene = Scene(planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
+    scene = Scene(doubles_planting([Wheat, Pea, Wheat]), environment=[ToyCaribuModel], translator=_translator(),
                   time_step=DT)
     wheat, pea = (p.data_structure for p in scene.populations)
-    for ds in (wheat, pea):                                             # leaning elements: a projected area
-        ds.set("x2", ds.get("x1") + 0.3)
+    for data_structure in (wheat, pea):                                             # leaning elements: a projected area
+        data_structure.set("x2", data_structure.get("x1") + 0.3)
     scene.run()
-    geometry = {g: np.r_[wheat.get(g), pea.get(g)] for g in GEOMETRY}
-    expected = absorbed_light(triangles(*(geometry[g] for g in GEOMETRY)))
+    geometry = {column: np.r_[wheat.get(column), pea.get(column)] for column in GEOMETRY}
+    expected = absorbed_light(triangles(*(geometry[column] for column in GEOMETRY)))
     np.testing.assert_allclose(np.r_[wheat.get("absorbed"), pea.get("absorbed")], expected)
     assert (expected < 1.).any() and (expected == 1.).any()             # shading within and between populations
     pea.set("radius", 0.5)                                              # a change seen only at the next run
@@ -140,4 +138,4 @@ def test_a_light_model_triangulates_the_populations_itself():
         scene.run()
     np.testing.assert_array_equal(wheat.get("absorbed"), kept)          # held between runs
     scene.run()
-    assert scene.environment[0].runs == 2 and not np.array_equal(wheat.get("absorbed"), kept)
+    assert scene.calls["ToyCaribuModel.ToyCaribu"] == 2 and not np.array_equal(wheat.get("absorbed"), kept)

@@ -8,12 +8,15 @@ face_area and face_distance: graph systems, boundary sets, masks, steps and the 
 Between cells of different sizes, the two centres are also offset across the face: edge laws written with the graph
 view's edge_difference (D @ u, consistent, exact for linear u) are accurate there, incidence.T @ u is not.
 
-    grid = AdaptiveGridDataStructure(shape=(10, 10, 20), dx=0.02, max_level=2, periodic=(True, True, False))
-    grid.refine(lambda g: g.get("root_length_density") > 1e3)      # between steps
-    grid.coarsen(lambda g: g.get("root_length_density") < 1e2)
+    grid = AdaptiveGridDataStructure(shape=(10, 10, 20), spacing=0.02, max_level=2, periodic=(True, True, False))
+    grid.refine(lambda g: mtg.get("root_length_density") > 1e3)      # between steps
+    grid.coarsen(lambda g: mtg.get("root_length_density") < 1e2)
 
 Refining or coarsening is a topology change: registered variables are carried over by volume overlaps, extensive
-values split or summed, the others volume-averaged (copied into children), edge variables reset to their default.
+values split or summed, the others volume-averaged (copied into children), edge variables reset to their default;
+the geometric descriptors (data_api.GRID_DESCRIPTORS: cell_volume, cell_size_z, boundary_low_z, face_normal_z, ...)
+are set for the new cells, then the components' carry-over hooks run (coupling.component.after_regrid: a variable
+the volume averages do not carry, set again from those that are).
 
 Faces are found on the finest lattice (base cells x 2^max_level per axis): memory grows as the base grid times
 2^(d · max_level), which suits moderate refinement depths.
@@ -23,28 +26,30 @@ from typing import Optional
 import numpy as np
 from scipy.sparse import coo_matrix, csc_matrix, csr_matrix, diags
 
-from openalea.metafspm.data_structure.data_api import DataStructure, GraphView, VariableStoreMixin
+from openalea.metafspm.data_structure.data_api import (DataStructure, GraphView, VariableStoreMixin,
+                                                      register_grid_descriptors)
 
 
 class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
 
     _default_location = "cell"
 
-    def __init__(self, shape: tuple, dx=1.0, origin=None, periodic=False, max_level: int = 2):
+    def __init__(self, shape: tuple, spacing=1.0, origin=None, periodic=False, max_level: int = 2):
         self._base_shape = tuple(int(n) for n in shape)
         d = len(self._base_shape)
-        self._base_dx = np.broadcast_to(np.asarray(dx, dtype=float), (d,)).copy()
+        self._base_spacing = np.broadcast_to(np.asarray(spacing, dtype=float), (d,)).copy()
         self._origin = (np.zeros(d) if origin is None
                         else np.broadcast_to(np.asarray(origin, dtype=float), (d,)).copy())
         self._periodic = np.broadcast_to(np.asarray(periodic, dtype=bool), (d,)).copy()
         self.max_level = int(max_level)
         self._fine_shape = tuple(n * 2 ** self.max_level for n in self._base_shape)
-        self._dx = self._base_dx / 2 ** self.max_level            # the finest spacing (used by CrossMapping)
+        self._spacing = self._base_spacing / 2 ** self.max_level            # the finest spacing (used by CrossMapping)
         self._fields, self._edge_fields, self._scalars = {}, {}, {}
         index = np.indices(self._base_shape).reshape(d, -1).T
         self._set_leaves(np.zeros(len(index), dtype=np.int64), index.astype(np.int64))
         self.register("face_area", self._face_area, location="edge")
         self.register("face_distance", self._face_distance, location="edge")
+        register_grid_descriptors(self)
 
     # ── Leaves and their geometry ─────────────────────────────────────────────
 
@@ -60,7 +65,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
     def periodic(self) -> tuple:
         return tuple(bool(p) for p in self._periodic)
 
-    def levels(self) -> np.ndarray:
+    def refinement_level(self) -> np.ndarray:
         """Refinement level of each cell."""
         return self._level
 
@@ -93,11 +98,11 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
 
     def cell_volume(self) -> np.ndarray:
         """Volume of each cell."""
-        return np.prod(self._base_dx) / (2 ** len(self._base_shape)) ** self._level
+        return np.prod(self._base_spacing) / (2 ** len(self._base_shape)) ** self._level
 
     def cell_sizes(self) -> np.ndarray:
         """Size of each cell along each axis, one row per cell."""
-        return self._base_dx[None, :] / (2 ** self._level)[:, None]
+        return self._base_spacing[None, :] / (2 ** self._level)[:, None]
 
     def cell_centers(self) -> np.ndarray:
         return self._origin + (self._index + 0.5) * self.cell_sizes()
@@ -106,7 +111,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         """Faces between neighbouring leaves, axis by axis, from the finest lattice (periodic axes wrap)."""
         d = len(self._base_shape)
         tails, heads, areas, axes = [], [], [], []
-        fine_face = np.prod(self._dx) / self._dx                    # finest face area per axis
+        fine_face = np.prod(self._spacing) / self._spacing                    # finest face area per axis
         for a in range(d):
             inner = [slice(None)] * d
             inner[a] = slice(0, self._fine_shape[a] - 1)
@@ -137,7 +142,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         self._face_head = np.concatenate(heads) if heads else empty
         self._face_axis = np.concatenate(axes) if axes else empty
         self._face_area = np.concatenate(areas) if areas else np.empty(0)
-        size = self._base_dx[None, :] / (2 ** self._level)[:, None]
+        size = self._base_spacing[None, :] / (2 ** self._level)[:, None]
         if self._face_tail.size:
             half = 0.5 * (size[self._face_tail, self._face_axis] + size[self._face_head, self._face_axis])
             self._face_distance = half
@@ -239,7 +244,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS
         old, new = previous["leaf_of"].reshape(-1), self._leaf_of.reshape(-1)
         pairs, overlap = np.unique(np.stack([new, old], axis=1), axis=0, return_counts=True)
-        fine_volume = np.prod(self._dx)
+        fine_volume = np.prod(self._spacing)
         n_new, n_old = self._level.size, previous["level"].size
         overlap = overlap * fine_volume
         W = coo_matrix((overlap, (pairs[:, 0], pairs[:, 1])), shape=(n_new, n_old)).tocsr()
@@ -264,7 +269,9 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         self.mark_written("face_distance")
         self.__dict__.pop("_parameter_views", None)
         self.__dict__.pop("_index_cache", None)
+        register_grid_descriptors(self)                 # its geometric descriptors: the new cells'
         self._bump_version()
+        self._regridded()                               # the components' carry-over hooks (after_regrid)
 
     def update_topology(self) -> None:
         """Refinement updates the topology itself (refine / coarsen); nothing to do otherwise."""
@@ -302,7 +309,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
     def edges(self) -> list:
         return list(zip(self._face_tail.tolist(), self._face_head.tolist()))
 
-    def incidence_matrix(self):
+    def _incidence_matrix(self):
         n, m = self.n_nodes(), self.n_edges()
         e = np.arange(m)
         return coo_matrix((np.r_[np.ones(m), -np.ones(m)], (np.r_[self._face_tail, self._face_head], np.r_[e, e])),
@@ -314,7 +321,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
             raise NotImplementedError("boundary ports on grids: use boundary sets on the boundary cells")
         n = self.n_nodes()
         return GraphView(node_ids=self.cell_ids(), edge_ids=np.arange(self.n_edges(), dtype=np.int64),
-                         tail=self._face_tail, head=self._face_head, incidence=self.incidence_matrix(),
+                         tail=self._face_tail, head=self._face_head, incidence=self._incidence_matrix(),
                          boundary_incidence=csc_matrix((n, 0), dtype=np.float64), boundary_names=(),
                          difference=self.edge_difference())
 
@@ -322,11 +329,11 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         """Centre of cells b minus centre of cells a, wrapped across the periodic axes."""
         centre = self.cell_centers()
         delta = centre[b] - centre[a]
-        length = np.asarray(self._base_shape) * self._base_dx
+        length = np.asarray(self._base_shape) * self._base_spacing
         wrap = self._periodic[None, :]
         return np.where(wrap, delta - length * np.round(delta / length), delta)
 
-    def cell_gradient(self) -> tuple:
+    def _cell_gradient(self) -> tuple:
         """
         Per axis, the operator (cells x cells) giving each cell's gradient component: a least-squares fit over its face
         neighbours (centre offsets wrapped across periodic axes), exact for linear fields.
@@ -363,7 +370,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         level_t, level_h = self._level[tail], self._level[head]
         hanging = np.flatnonzero(level_t != level_h)
         if hanging.size:
-            gradient = self.cell_gradient()
+            gradient = self._cell_gradient()
             coarse = np.where(level_t[hanging] < level_h[hanging], tail[hanging], head[hanging])
             fine = np.where(level_t[hanging] < level_h[hanging], head[hanging], tail[hanging])
             sign = np.where(coarse == tail[hanging], 1., -1.)             # the coarse cell's sign in the difference
@@ -377,9 +384,6 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         difference.eliminate_zeros()
         self.__dict__["_edge_difference"] = (self.topology_version, difference)
         return difference
-
-    def topology(self, boundary_ports: tuple = ()) -> GraphView:
-        return self.to_graph_view(boundary_ports=boundary_ports)
 
     def layer_mask(self, **layers) -> np.ndarray:
         """Cells touching a boundary layer of the domain: layer_mask(z=-1) (bottom), layer_mask(x=0), ..."""
@@ -406,7 +410,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
         points = np.atleast_2d(np.asarray(points, dtype=float))
         d = len(self._base_shape)
         periodic = self._periodic if periodic is None else np.broadcast_to(np.asarray(periodic, dtype=bool), (d,))
-        idx = np.floor((points - self._origin) / self._dx).astype(np.int64)
+        idx = np.floor((points - self._origin) / self._spacing).astype(np.int64)
         for a in range(d):
             n = self._fine_shape[a]
             if periodic[a]:
@@ -436,7 +440,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
     # ── Checkpoints ───────────────────────────────────────────────────────────
 
     def _construction(self) -> dict:
-        return {"shape": list(self._base_shape), "dx": self._base_dx.tolist(), "origin": self._origin.tolist(),
+        return {"shape": list(self._base_shape), "spacing": self._base_spacing.tolist(), "origin": self._origin.tolist(),
                 "periodic": self._periodic.tolist(), "max_level": self.max_level}
 
     def _checkpoint_extra(self) -> tuple:
@@ -444,7 +448,7 @@ class AdaptiveGridDataStructure(VariableStoreMixin, DataStructure):
 
     @classmethod
     def _from_construction(cls, construction: dict, saved: dict):
-        grid = cls(shape=tuple(construction["shape"]), dx=np.asarray(construction["dx"]),
+        grid = cls(shape=tuple(construction["shape"]), spacing=np.asarray(construction["spacing"]),
                    origin=np.asarray(construction["origin"]), periodic=construction["periodic"],
                    max_level=construction["max_level"])
         grid._load_construction(construction, saved)

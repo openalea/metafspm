@@ -3,17 +3,22 @@ The plant / soil contract of the DataStructure doubles (PlantCarbon, PlantNitrog
 plant model couples its components within its MPG, the scene exchanges the soil links through a CrossMapping, and
 several plants feed one soil without zeroing (formerly play_Orchestra with Transport and Coupler).
 """
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 import pytest
 
 import doubles
 import doubles_ds
+from openalea.metafspm.coupling.component import FunctionalComponent
 from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
+from openalea.metafspm.scene.environment import EnvironmentModel
 from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.solve.decorator import rate
 
 SIDE = doubles.SOIL_VOXEL_SIDE
 
@@ -22,52 +27,45 @@ class ContractSeedling:
     """Initial structure of the contract plant: a vertical chain of 3 segments of SEGMENT_LENGTH under the plant."""
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s = g.scales
+    def initiate_plant(cls, mtg, plant, parameters):
+        s = mtg.scales
         parent = plant
-        for scale, label in ((s.Axis, g.labels.Axis.Root), (s.GrowthUnit, g.labels.GrowthUnit.Root),
-                             (s.Phytomer, g.labels.Phytomer.Root), (s.Organ, g.labels.Organ.RootInternode)):
-            parent = g.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
-        segment = g.add_component(parent, **PropsConfig(scale=s.SubOrgan, edge_type='/', label=g.labels.SubOrgan.RootSegment))
+        for scale, label in ((s.Axis, mtg.labels.Axis.Root), (s.GrowthUnit, mtg.labels.GrowthUnit.Root),
+                             (s.Phytomer, mtg.labels.Phytomer.Root), (s.Organ, mtg.labels.Organ.RootInternode)):
+            parent = mtg.add_component(parent, **PropsConfig(scale=scale, edge_type='/', label=label))
+        segment = mtg.add_component(parent, **PropsConfig(scale=s.SubOrgan, edge_type='/', label=mtg.labels.SubOrgan.RootSegment))
         segments = [segment] + [None] * 2
         for i in (1, 2):
-            segments[i] = g.add_child(segments[i - 1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
-                                                                     label=g.labels.SubOrgan.RootSegment))
-        x, y, z = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
+            segments[i] = mtg.add_child(segments[i - 1], **PropsConfig(scale=s.SubOrgan, edge_type='<',
+                                                                     label=mtg.labels.SubOrgan.RootSegment))
+        x, y, z = (float(mtg.property(name)[plant]) for name in ("x", "y", "z"))
         for rank, v in enumerate(segments):
             top = z - doubles.SEGMENT_LENGTH * rank
             for name, value in (("x1", x), ("x2", x), ("y1", y), ("y2", y), ("z1", top),
                                 ("z2", top - doubles.SEGMENT_LENGTH)):
-                g.property(name)[v] = value
+                mtg.set_values(name, [v], [value])
 
 
 class ContractPlant(CompositeModel):
     initiators = (ContractSeedling,)
-    translator_path = None
+    parts = {"carbon": doubles_ds.PlantCarbon, "nitrogen": doubles_ds.PlantNitrogen}
 
     def __init__(self, data_structure, time_step):
-        ds, g = data_structure, data_structure.mtg
+        mtg = data_structure.mtg
         for name in ("x1", "x2", "y1", "y2", "z1", "z2"):
-            ds.register(name, [g.property(name)[v] for v in ds.entity_ids("node")], location="node")
-        self.carbon = doubles_ds.PlantCarbon(data_structure=ds)
-        self.nitrogen = doubles_ds.PlantNitrogen(data_structure=ds)
-        self.declare_data_and_couple_components(translator_path=self.translator_path,
-                                                components=(self.carbon, self.nitrogen))
-
-    def run(self):
-        self.carbon()
-        self.nitrogen()
+            data_structure.register(name, [mtg.view(name)[v] for v in data_structure.entity_ids("node")], location="node")
+        super().__init__(data_structure, time_step)
 
 
-class ContractSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.grid = ArrayDataStructure(shape=(int(round(scene_xrange / SIDE)), int(round(scene_yrange / SIDE)), 2),
-                                       dx=SIDE)
+class ContractSoil(EnvironmentModel):
+    compartment = "Soil"
+
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(int(round(x_range / SIDE)), int(round(y_range / SIDE)), 2),
+                                       spacing=SIDE)
         self.soil = doubles_ds.GridSoil(data_structure=self.grid)
         self.components = [self.soil]
-
-    def run(self):
-        self.soil()
 
 
 def _soil_links(nested):
@@ -77,19 +75,20 @@ def _soil_links(nested):
         for provider, links in providers.items():
             if doubles_ds.SOIL in (receiver, provider) and receiver != provider:
                 for variable, sources in links.items():
-                    translator.link(receiver, variable, provider, dict(sources),
-                                    aggregation="sum" if receiver == doubles_ds.SOIL else "broadcast")
+                    options = {} if "sources" not in sources else {"unit_check": sources["unit_check"]}
+                    translator.link(receiver, variable, provider, dict(sources.get("sources", sources)),
+                                    aggregation="sum" if receiver == doubles_ds.SOIL else "broadcast", **options)
     return translator
 
 
 @pytest.fixture
 def scene(tmp_path):
     nested = doubles_ds.translator(soil=doubles_ds.SOIL)
-    ContractPlant.translator_path = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
-    table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, z=-0.01, rotation=0.,
-                               scenario={"parameters": {}}) for i in range(3)])
+    ContractPlant.translator = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=ContractPlant, x=0.025 + 0.05 * i, y=0.025, depth=0.01, rotation=0.,
+                               scenario={}) for i in range(3)])
     return Scene(table, environment=[ContractSoil], translator=_soil_links(nested), time_step=doubles.TIME_STEP,
-                 scene_xrange=0.15, scene_yrange=0.05)
+                 x_range=0.15, y_range=0.05)
 
 
 def test_the_contract_models_run_in_a_scene(scene):
@@ -105,3 +104,36 @@ def test_the_contract_models_run_in_a_scene(scene):
     cells = scene.mappings[0].cells
     np.testing.assert_allclose(plants.get("C_hexose_soil"), (grid.get("DOC") / SIDE ** 3).reshape(-1)[cells])
     assert len(set(np.unravel_index(cells, grid.shape)[0].tolist())) == 3      # one column per plant
+
+
+@dataclass
+class TemperatureReader(FunctionalComponent):
+    """A second component of the plant model reading the soil's temperature, as PlantCarbon does."""
+    soil_temperature: float = doubles_ds._var("input_variable", default=10., by="SoilModel")
+    felt_temperature: float = doubles_ds._var("state_variable", kind="intensive")
+
+    @rate
+    def _felt_temperature(self, soil_temperature):
+        return np.asarray(soil_temperature, dtype=float).copy()
+
+
+class TwoReadersPlant(ContractPlant):
+    parts = {"carbon": doubles_ds.PlantCarbon, "nitrogen": doubles_ds.PlantNitrogen, "reader": TemperatureReader}
+
+
+def test_two_components_reading_one_soil_variable_receive_it_once(tmp_path):
+    """Two components of one plant model on its DataStructure, each linked to the soil's temperature: the scene
+    exchanges it once (their two links' values were added, as several providers' are: twice the temperature)."""
+    nested = doubles_ds.translator(soil=doubles_ds.SOIL)
+    TwoReadersPlant.translator = doubles.write_translator(tmp_path / "plant_translator.yaml", nested)
+    links = _soil_links(nested)
+    links.link("TemperatureReader", "soil_temperature", doubles_ds.SOIL, {"soil_temperature": 1.},
+               aggregation="broadcast")
+    table = pd.DataFrame([dict(plant="p0", model=TwoReadersPlant, x=0.025, y=0.025, depth=0.01, rotation=0.,
+                               scenario={})])
+    scene = Scene(table, environment=[ContractSoil], translator=links, time_step=doubles.TIME_STEP, x_range=0.05,
+                  y_range=0.05)
+    scene.run()
+    plants = scene.populations[0].data_structure
+    np.testing.assert_allclose(plants.get("soil_temperature"), 10.)
+    np.testing.assert_allclose(plants.get("felt_temperature"), 10.)

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from openalea.metafspm.coupling.component import FunctionalComponent, declare
+from openalea.metafspm.coupling.component import FunctionalComponent, _declare
 from openalea.metafspm.data_structure.configs import PropsConfig
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.data_structure.mpg import MPG
@@ -20,35 +20,44 @@ from simple_seedling import generate_simple_mpg_seedling
 NAMES = {"RootCarbon": "PlantCarbon", "RootNitrogen": "PlantNitrogen", "SoilModel": "SoilModel"}
 
 
-def _var(variable_type, default=0., state_variable_type="", by=""):
-    return declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
-                   value_comment="", references="", DOI="", variable_type=variable_type, by=by,
-                   state_variable_type=state_variable_type, edit_by="user", scale="node")
+def _var(role, default=0., kind="", by=""):
+    return _declare(default=default, unit="adim", unit_comment="", description="", min_value="", max_value="",
+                   value_comment="", references="", DOI="", role=role, by=by,
+                   kind=kind, location="node")
 
 
 def translator(soil="SoilModel"):
-    """doubles.TRANSLATOR with the DataStructure-backed component names (and the soil component named *soil*)."""
+    """doubles.TRANSLATOR with the DataStructure-backed component names (and the soil component named *soil*); its
+    links with a factor other than 1 (the doubles' arbitrary weights, not unit conversions: their variables are all
+    "adim") in the long form with unit_check=False."""
     names = dict(NAMES, SoilModel=soil)
     renamed = {}
     for receiver, providers in copy.deepcopy(doubles.TRANSLATOR).items():
-        renamed[names[receiver]] = {names[provider]: links for provider, links in providers.items()}
+        renamed[names[receiver]] = {names[provider]: {variable: _deliberate(sources) for variable, sources in links.items()}
+                                    for provider, links in providers.items()}
     return renamed
 
 
+def _deliberate(sources: dict) -> dict:
+    if all(factor == 1. for factor in sources.values()):
+        return sources
+    return {"sources": sources, "unit_check": False}
+
+
 def make_plant_ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 @dataclass
 class PlantCarbon(FunctionalComponent):
-    soil_temperature: float = _var("input", default=10., by="SoilModel")
-    nitrogen_status: float = _var("input", by="PlantNitrogen")
+    soil_temperature: float = _var("input_variable", default=10., by="SoilModel")
+    nitrogen_status: float = _var("input_variable", by="PlantNitrogen")
 
-    hexose: float = _var("state_variable", default=1., state_variable_type="massic_concentration")
-    hexose_exudation: float = _var("state_variable", state_variable_type="NonInertialExtensive")
+    hexose: float = _var("state_variable", default=1., kind="massic_concentration")
+    hexose_exudation: float = _var("state_variable", kind="non_inertial_extensive")
 
     exudation_rate: float = _var("parameter", default=0.1)
 
@@ -63,14 +72,14 @@ class PlantCarbon(FunctionalComponent):
 
 @dataclass
 class PlantNitrogen(FunctionalComponent):
-    hexose: float = _var("input", by="PlantCarbon")
-    sugar: float = _var("input", by="PlantCarbon")
-    carbon_supply: float = _var("input", by="PlantCarbon")
-    C_hexose_soil: float = _var("input", by="SoilModel")
+    hexose: float = _var("input_variable", by="PlantCarbon")
+    sugar: float = _var("input_variable", by="PlantCarbon")
+    carbon_supply: float = _var("input_variable", by="PlantCarbon")
+    C_hexose_soil: float = _var("input_variable", by="SoilModel")
 
-    amino_acids: float = _var("state_variable", default=2., state_variable_type="massic_concentration")
-    nitrate: float = _var("state_variable", default=4., state_variable_type="massic_concentration")
-    amino_acids_exudation: float = _var("state_variable", state_variable_type="NonInertialExtensive")
+    amino_acids: float = _var("state_variable", default=2., kind="massic_concentration")
+    nitrate: float = _var("state_variable", default=4., kind="massic_concentration")
+    amino_acids_exudation: float = _var("state_variable", kind="non_inertial_extensive")
 
     @rate
     def _amino_acids_exudation(self, amino_acids, carbon_supply):
@@ -88,35 +97,35 @@ SOIL = "GridSoil"
 
 def make_chain_plant_ds(coordinates=(0.025, 0.025, -0.01), n_segments=3):
     """Plant MPG DataStructure: a vertical chain of segments below *coordinates*, with their segment ends."""
-    g = MPG()
-    scale = g.scales.SubOrgan
-    anchor = g.scales.anchors[scale]
-    vids = [g.add_system_root_at_scale(scale, label=g.labels.SubOrgan.RootSegment)]
+    mtg = MPG()
+    scale = mtg.scales.SubOrgan
+    anchor = mtg.scales.anchors[scale]
+    vids = [mtg._add_system_root_at_scale(scale, label=mtg.labels.SubOrgan.RootSegment)]
     for _ in range(n_segments - 1):
-        vids.append(g.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<',
-                                                                            label=g.labels.SubOrgan.RootSegment)))
-    g.populate_graph(scale)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=scale)
+        vids.append(mtg.add_component_with_topo(anchor, vids[-1], **PropsConfig(scale=scale, edge_type='<',
+                                                                            label=mtg.labels.SubOrgan.RootSegment)))
+    mtg.populate_graph(scale)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=scale)
     rank = {v: i for i, v in enumerate(vids)}
     x, y, z = coordinates
-    top = np.array([z - doubles.SEGMENT_LENGTH * rank[v] for v in ds.entity_ids("node")])
+    top = np.array([z - doubles.SEGMENT_LENGTH * rank[v] for v in data_structure.entity_ids("node")])
     for name, values in (("x1", x), ("x2", x), ("y1", y), ("y2", y), ("z1", top), ("z2", top - doubles.SEGMENT_LENGTH)):
-        ds.register(name, values, location="node", on_grow="inherit")
-    return ds
+        data_structure.register(name, values, location="node", on_grow="inherit")
+    return data_structure
 
 
-def _var_cell(variable_type, default=0.):
-    return declare(default=default, unit="", unit_comment="", description="", min_value="", max_value="",
-                   value_comment="", references="", DOI="", variable_type=variable_type, by="",
-                   state_variable_type="", edit_by="user", scale="cell")
+def _var_cell(role, default=0.):
+    return _declare(default=default, unit="adim", unit_comment="", description="", min_value="", max_value="",
+                   value_comment="", references="", DOI="", role=role, by="",
+                   kind="", location="cell")
 
 
 @dataclass
 class GridSoil(FunctionalComponent):
     """Soil double on a 3-D ArrayDataStructure in (x, y, z), with the equations of the former props-based soil double."""
-    hexose_exudation_massic: float = _var_cell("input")
-    amino_acids_exudation: float = _var_cell("input")
+    hexose_exudation_massic: float = _var_cell("input_variable")
+    amino_acids_exudation: float = _var_cell("input_variable")
     DOC: float = _var_cell("state_variable")
     C_hexose_soil: float = _var_cell("state_variable")
     soil_temperature: float = _var_cell("state_variable", default=10.)

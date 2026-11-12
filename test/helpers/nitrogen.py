@@ -12,55 +12,49 @@ from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import boundary_condition, edge_law, graph_output, graph_system, node_balance
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=-1e4, max_value=1e4, value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=-1e4, max_value=1e4, value_comment="", references="",
            DOI=[])
 DT, K = 0.5, 0.07
 SCALES = {"SubOrgan": (14, 13), "Organ": (8, 7)}
 
 
 def nitrogen_ds(scale="SubOrgan"):
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(getattr(g.scales, scale))
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=getattr(g.scales, scale))
-    is_root = np.zeros(ds.n_nodes())
-    is_root[ds.roots()[0]] = 1.
-    ds.register("is_root", is_root, location="node")
-    return ds
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(getattr(mtg.scales, scale))
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=getattr(mtg.scales, scale))
+    is_root = np.zeros(data_structure.n_nodes())
+    is_root[data_structure.roots()[0]] = 1.
+    data_structure.register("is_root", is_root, location="node")
+    return data_structure
 
 
-def incidence(ds):
-    return ds.incidence_matrix().toarray()
+def incidence(data_structure):
+    return data_structure._incidence_matrix().toarray()
 
 
 # ---------------------------------------------------------------- the equations
 
 def balance(self, concentration, axial_flux, radial_solute_input):
-    B = self._graph_view.incidence
-    return ((concentration - self.previous("concentration")) / self.dt
+    B = self.graph_view.incidence
+    return ((concentration - self.previous("concentration")) / self.step_duration
             + np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
-
-
-def balance_target(self, axial_flux, radial_solute_input):
-    """explicit=True: the new concentration, c_old - dt (B q - J)."""
-    B = self._graph_view.incidence
-    return self.previous("concentration") - self.dt * (np.asarray(B @ axial_flux).reshape(-1) - radial_solute_input)
 
 
 def concentration_rate(self, axial_flux, radial_solute_input):
     """The rate form: dc/dt = J - B q."""
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return radial_solute_input - np.asarray(B @ axial_flux).reshape(-1)
 
 
 def fick(self, concentration, axial_flux, K_axial):
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return axial_flux - K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
 
 def fick_target(self, concentration, K_axial):
     """explicit=True: the flux itself, K (B^T c)."""
-    B = self._graph_view.incidence
+    B = self.graph_view.incidence
     return K_axial * np.asarray(B.T @ concentration).reshape(-1)
 
 
@@ -68,10 +62,10 @@ def fick_target(self, concentration, K_axial):
 
 @dataclass
 class NitrogenFields(FunctionalComponent):
-    concentration: float = state_variable(**DOC, initialize=0.5, location="node", state_variable_type="intensive")
-    axial_flux: float = state_variable(**DOC, initialize=0., location="edge", state_variable_type="extensive")
+    concentration: float = state_variable(**DOC, default=0.5, location="node", kind="intensive")
+    axial_flux: float = state_variable(**DOC, default=0., location="edge", kind="extensive")
     K_axial: float = parameter(**DOC, by="NitrogenFields", default=0.05, location="edge")
-    radial_solute_input: float = input_variable(**DOC, by="RadialExchange", initialize=0., location="node")
+    radial_solute_input: float = input_variable(**DOC, by="RadialExchange", default=0., location="node")
     c_dirichlet: float = parameter(**DOC, by="NitrogenFields", default=0., location="node")
     q_boundary: float = parameter(**DOC, by="NitrogenFields", default=0., location="node")
     time_step = DT
@@ -94,14 +88,6 @@ class TransportExplicitLaw(NitrogenFields):
 
 
 @dataclass
-class TransportExplicitBalance(NitrogenFields):
-    @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"])
-    class _solve:
-        _balance = node_balance(field="concentration", explicit=True)(balance_target)
-        _fick = edge_law(field="axial_flux")(fick)
-
-
-@dataclass
 class TransportWithAmount(NitrogenFields):
     @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"])
     class _solve:
@@ -118,7 +104,7 @@ class TransportWithOutput(NitrogenFields):
 
         @graph_output("axial_divergence", location="node")
         def _divergence(self, axial_flux):
-            return np.asarray(self._graph_view.incidence @ axial_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ axial_flux).reshape(-1)
 
 
 @dataclass
@@ -128,7 +114,7 @@ class TransportDirichlet(NitrogenFields):
         _balance = node_balance(field="concentration")(balance)
         _fick = edge_law(field="axial_flux")(fick)
 
-        @boundary_condition("node", "dirichlet", field="concentration", filters={"is_root": ">0"})
+        @boundary_condition("node", "dirichlet", field="concentration", where={"is_root": ">0"})
         def _root(self, concentration, c_dirichlet):
             return concentration - c_dirichlet
 
@@ -137,9 +123,9 @@ class TransportDirichlet(NitrogenFields):
 class TransportNeumann(NitrogenFields):
     @graph_system(node_unknowns=["concentration"], edge_unknowns=["axial_flux"])
     class _solve:
-        _balance = node_balance(field="concentration", explicit=True)(balance_target)
+        _balance = node_balance(field="concentration")(balance)
         _fick = edge_law(field="axial_flux")(fick)
 
-        @boundary_condition("node", "neumann", field="concentration", filters={"is_root": ">0"})
+        @boundary_condition("node", "neumann", field="concentration", where={"is_root": ">0"})
         def _root(self, q_boundary):
             return q_boundary                                          # an inflow

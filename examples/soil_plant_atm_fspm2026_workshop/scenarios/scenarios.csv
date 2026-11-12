@@ -1,0 +1,5 @@
+name,model,type,unit,description,humid,dry
+root_radial_k,SeedlingWater,parameter,mm3 s-1 MPa-1 m-1,Root radial conductance per length,0.5,0.5
+stomatal_conductance,SeedlingWater,parameter,mol m-2 s-1,Stomatal conductance to water vapour,0.2,0.1
+topsoil_K,Soil,parameter,mm3 m-1 s-1 MPa-1,Hydraulic conductivity of the topsoil,1.5,0.6
+air_water_potential,,forcing,MPa,The air's water potential over the day (a table of time in s),air_humid.csv,air_dry.csv

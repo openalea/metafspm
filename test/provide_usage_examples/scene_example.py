@@ -3,37 +3,36 @@ Target usage of the population scene, replacing play_Orchestra. The downstream
 models (GrassBRIDGES, RhizoSoil, the light model) must first follow the population contracts:
 
   plant model        Model(data_structure, time_step, <its own arguments>), class attribute initiators
-  environment model  Model(populations, scene_xrange, scene_yrange, time_step, <its own arguments>)
+  environment model  Model(plant_data_structures, x_range, y_range, time_step, <its own arguments>)
 
 Not runnable here: the imported packages live outside metafspm.
 """
 import os
-import pickle
 
 import openalea.grassbridges
 from openalea.grassbridges import GrassBRIDGES, LightModel
 from openalea.rhizosoil.model_coupled import RhizoSoil
-from openalea.fspm.utility.scenario.initialize import MakeScenarios as ms
 
-from openalea.metafspm.scene.population import planting_table
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import planting, stand
+from openalea.metafspm.scene.scenarios import read_scenarios
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 
 
 if __name__ == "__main__":
-    scenarios = ms.from_table(file_path="inputs/Scenarios_26-08-04.xlsx", which=["GB_soil_1.0"])
+    # one row per entry, a model column (GrassBRIDGES, RhizoSoil, LightModel), one column per scenario; the meteo a
+    # forcing row (a CSV of time and its variables)
+    scenarios = read_scenarios("inputs/Scenarios_26-08-04.csv", which=["GB_soil_1.0"])
     output_folder = "outputs"
-    n_iterations = 2500
+    steps = 2500
 
     for scenario_name, scenario in scenarios.items():
-        table = planting_table(xrange=0.15, yrange=0.15, sowing_density=250, row_spacing=0.15, sowing_depth=[0.025],
-                               plant_models=[GrassBRIDGES], plant_scenarios=[scenario], seed=1)
+        forcings = scenario.pop("forcings", {})
+        table = planting(stand(5, row_spacing=0.15, sowing_density=250, depth=0.025, seed=1), GrassBRIDGES,
+                         scenario.get("GrassBRIDGES", {}))
         scene = Scene(table, environment=[RhizoSoil, LightModel],
-                      environment_scenarios=[scenario, dict(scenario, meteo=os.path.join("inputs", "meteo_Ljutovac2002.csv"))],
+                      environment_scenarios=[scenario.get("RhizoSoil", {}), scenario.get("LightModel", {})],
                       translator=os.path.join(openalea.grassbridges.__path__[0], "scene_translator.py"),
-                      time_step=3600, mapping_method="barycentre",
-                      output_dirpath=os.path.join(output_folder, scenario_name),
-                      log_plants=[table["plant"].iloc[0]], heavy_log_period=48)
-        scene.simulate(n_iterations)
-
-        with open(os.path.join(output_folder, scenario_name, "input_scenario.pckl"), "wb") as f:
-            pickle.dump(scenario, f)
+                      time_step=3600, mapping_method="barycentre", forcings=forcings,
+                      recorder=SceneRecorder(os.path.join(output_folder, scenario_name), segment_plants=["p0"],
+                                             segment_period="48 h", frame_period="24 h", checkpoint_period="240 h"))
+        scene.simulate(steps)            # run.json, scenario.json, Plant/, Soil/, frames/, checkpoints/
