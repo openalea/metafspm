@@ -69,7 +69,7 @@ class SharedStore:
     reference to one part gives the same object.
     """
 
-    def __init__(self, folder: str, forked: dict = None):
+    def __init__(self, folder: str, forked: dict = None, external=None):
         self.folder = os.fspath(folder)
         self._keys = {}                 # {id(value): (value, key)}: the values shared so far, by object
         self._loaded = {}               # {key: value}: within a load
@@ -77,6 +77,9 @@ class SharedStore:
         # {id(value): value} of the shared values a process and its forked workers both hold since the fork
         # (shared_objects): referred to by their id, neither written nor read (each process its own, the same bits)
         self.forked = forked if forked is not None else {}
+        # a store of parts kept outside the folder (solve.archetype_store's, between a run's processes): a value it
+        # holds referred to by its reference(value), read back by its value(reference); neither written nor kept here
+        self.external = external
         self._inner = {}                # {key: the keys its part refers to}: the parts loaded
         self._referring = None          # the keys a load_referring() met (with the parts they refer to)
 
@@ -234,6 +237,10 @@ class _Pickler(pickle.Pickler):
         value = obj.value if isinstance(obj, Shared) else obj
         if self.store.forked.get(id(value)) is value:
             return "metafspm.forked", id(value)
+        external = self.store.external
+        reference = None if external is None else external.reference(value)
+        if reference is not None:
+            return "metafspm.external", reference
         return "metafspm.shared", self.store.key_of(name, value)
 
 
@@ -246,6 +253,8 @@ class _Unpickler(pickle.Unpickler):
         tag, key = pid
         if tag == "metafspm.forked":
             return self.store.forked[key]
+        if tag == "metafspm.external":
+            return self.store.external.value(key)
         if tag != "metafspm.shared":
             raise pickle.UnpicklingError(f"unknown persistent id {pid!r}")
         return self.store.value(key)
@@ -271,7 +280,7 @@ class _Collector(pickle.Pickler):
 
 class _Discard:
     def write(self, data) -> int:
-        return len(data)
+        return memoryview(data).nbytes          # bytes, or an array's PickleBuffer (protocol 5, in band)
 
 
 def shared_objects(value) -> dict:

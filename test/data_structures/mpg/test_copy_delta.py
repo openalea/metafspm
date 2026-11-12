@@ -193,3 +193,12 @@ def test_a_reader_kept_over_many_loads_lets_go_the_parts_no_longer_referred_to(t
     assert not os.path.exists(os.path.join(tmp_path, removed[0] + ".pkl"))
     content, _ = load({"other": Shared("other", other)})       # written again by its writer
     assert content["other"].tolist() == other.tolist()
+
+
+def test_shared_objects_walks_arrays_pickled_in_band():
+    """shared_objects pickles with protocol 5: an array's buffer (a PickleBuffer) is discarded like bytes."""
+    import numpy as np
+    from openalea.metafspm.scene.shared import Shared, shared_objects
+    part = Shared("part", np.arange(3.))
+    found = shared_objects({"array": np.arange(1000.), "part": part})
+    assert list(found.values()) == [part.value]

@@ -398,6 +398,7 @@ class Reduction:
         state.pop("_table", None)          # the groups' arrays: per DataStructure and topology
         state.pop("_assigned", None)
         state.pop("_parameters_kept", None)  # the plants' parameters read: per DataStructure
+        state.pop("_template_digests", None)  # the archetype store's (solve.archetype_store): made again
         state["_merged"] = {}              # merged_into's groups: made again from the templates (MBs a plant)
         return state
 
@@ -418,6 +419,7 @@ class Reduction:
         out.__dict__.pop("_assigned", None)
         out.__dict__.pop("_parameters_kept", None)
         out.__dict__.pop("_display_parts", None)
+        out.__dict__.pop("_template_digests", None)
         return out
 
     def bind(self, model, instance) -> None:
@@ -882,13 +884,15 @@ class Reduction:
     def _release(self, used: set) -> None:
         """The archetypes not in *used* released, a class's of a current family kept (assignment's rule); the blends
         dropped (made again when asked)."""
+        from openalea.metafspm.solve import archetype_store
         exact = [position for position, classes in enumerate(self.archetype_variables.values()) if classes is None]
         current = {self._class_family(archetype_key, exact) for archetype_key in used}
         for archetype_key in [k for k in self._archetypes if k not in used]:
             if len(exact) < len(self.archetype_variables) and self._class_family(archetype_key, exact) in current:
                 continue                              # a class of a current group's family: kept
             for archetype in self._archetypes.pop(archetype_key).values():
-                archetype.release()
+                if not archetype_store.is_shared(archetype):   # a store's: other populations may hold it
+                    archetype.release()
         self.__dict__["_blends"] = {}
 
     def group_archetypes(self, data_structure, groups, release: bool = False) -> dict:
@@ -936,10 +940,48 @@ class Reduction:
         described = {signature: (parameters, {archetype_key: (_describe(self.mtg, vertex), key, values)
                                               for archetype_key, (vertex, key, values) in requests.items()})
                      for signature, (parameters, requests) in missing.items()}
-        self._evaluate_missing(described)
+        from openalea.metafspm.solve import archetype_store
+        store = None if self.library else archetype_store.current()
+        if store is None:
+            self._evaluate_missing(described)
+        else:
+            self._evaluate_through_store(store, described)
         from openalea.metafspm.compute import Compute
         if Compute.current().checking("archetypes") and not self.library:
             check_archetypes(self, described)
+
+    def _evaluate_through_store(self, store, described: dict) -> None:
+        """_evaluate_missing's with the run's archetype store (solve.archetype_store): the kinds another process (or
+        another population of this one) evaluated read from it; of the others, those this process claims evaluated
+        here (in _evaluate_missing's batches) and written to it, then those another process claimed at the same
+        step awaited (evaluated here only if their claimer ended without them)."""
+        names, claimed, awaited = {}, {}, {}
+        for signature, (parameters, requests) in described.items():
+            for archetype_key, request in requests.items():
+                names[archetype_key] = name = store.name(self, archetype_key)
+                kind = store.load(name)
+                if kind is not None:
+                    self._archetypes[archetype_key] = kind
+                else:
+                    chosen = claimed if store.claim(name) else awaited
+                    chosen.setdefault(signature, (parameters, {}))[1][archetype_key] = request
+        self._evaluate_and_write(store, names, claimed)
+        orphans = {}
+        for signature, (parameters, requests) in awaited.items():
+            for archetype_key, request in requests.items():
+                kind = store.wait(names[archetype_key])
+                if kind is not None:
+                    self._archetypes[archetype_key] = kind
+                else:
+                    orphans.setdefault(signature, (parameters, {}))[1][archetype_key] = request
+        self._evaluate_and_write(store, names, orphans)
+
+    def _evaluate_and_write(self, store, names: dict, described: dict) -> None:
+        if described:
+            self._evaluate_missing(described)
+            for _, (_, requests) in described.items():
+                for archetype_key in requests:
+                    self._archetypes[archetype_key] = store.write(names[archetype_key], self._archetypes[archetype_key])
 
     def _evaluate_missing(self, described: dict) -> None:
         """Evaluate the archetypes *described* ({signature: (its plants' parameters, {archetype key: (its representative
@@ -949,8 +991,10 @@ class Reduction:
         batches (Compute.trim)."""
         parameters = {signature: values for signature, (values, _) in described.items()}
         requests = {archetype_key: request for _, (_, by_archetype) in described.items() for archetype_key, request in by_archetype.items()}
-        for batch in _batches(self, requests):
-            self._archetypes.update(_evaluate(self, parameters, batch))
+        from openalea.metafspm.compute import Compute
+        with Compute.current().timed("archetypes.evaluate"):
+            for batch in _batches(self, requests):
+                self._archetypes.update(_evaluate(self, parameters, batch))
 
     def _interior_cells(self, key) -> int:
         """The interior cells of the reduced template of key *key* (its full template's Compartments not kept)."""

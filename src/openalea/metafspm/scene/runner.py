@@ -71,15 +71,16 @@ from multiprocessing.connection import Pipe
 from time import perf_counter
 
 PRIVATE_FIXED_MB = 500.       # a forked worker's own memory before its plants (copy-on-write measured: route B §7)
-PER_PLANT_MB = 500.           # a worker's memory per plant: its private pages and the coordinator's pages it keeps
-                              # alive after the coordinator rewrites them (use case 1, 6 plants at day 2-3, the
-                              # scope's peak at 2 and 4 processes less its peak at 1: ~470 MB per plant, B3)
-COPY_PER_PLANT_MB = 500.      # the coordinator's growth per plant in its copies (use case 1 at day 2-3, the peak at 1
-                              # process less its build: (4.5 - 1.3) GB / 6 plants, B3)
+PER_PLANT_MB = 250.           # a worker's memory per plant: its private pages and the coordinator's pages it keeps
+                              # alive after the coordinator rewrites them (use case 1, 4-6 plants at day 0.5-3 with the
+                              # shared archetype store: the scope's peak at 2 and 4 processes less its peak at 1, B4)
+COPY_PER_PLANT_MB = 250.      # the coordinator's growth per plant in its copies (use case 1 at day 0.5-3: the peak at
+                              # 1 process less its build, over the plants; ~410 MB a plant with PER_PLANT_MB, B4)
 MEMORY_MARGIN = 0.10          # the memory budget's margin: 10 % of what is available kept free
 LOW_POWER_RATIO = 0.75        # a hybrid CPU's efficient core whose top frequency is below this ratio of the fastest
                               # efficient one's is a low-power core (left out: 2.2x slower on the laptop measured)
 STOP_TIMEOUT = 10.            # seconds a worker is given to stop before it is killed
+FOLDER_PREFIX = "metafspm-"   # a run's folder in /dev/shm: metafspm-<the coordinator's pid>-<random>
 
 
 # ── the machine: cores and memory ─────────────────────────────────────────
@@ -453,10 +454,20 @@ class SequentialRunner:
 
     processes = 1
 
+    def __init__(self):
+        self._archetypes = None         # the kinds the populations share (solve.archetype_store), in memory
+
     def start(self, scene) -> None:
         """Nothing to start."""
 
     def run_populations(self, scene) -> None:
+        from openalea.metafspm.solve import archetype_store
+        if self._archetypes is None:
+            self._archetypes = archetype_store.ArchetypeStore()
+        with archetype_store.using(self._archetypes):
+            self._run_populations(scene)
+
+    def _run_populations(self, scene) -> None:
         for population in scene.populations:
             if not scene._due(population.instance):
                 continue
@@ -550,9 +561,12 @@ class _Worker:
 
     def __init__(self, scene, indices: list, connection, folder: str, cores: list, forked: dict = None):
         from openalea.metafspm.scene.shared import SharedStore
+        from openalea.metafspm.solve import archetype_store
         self.scene, self.connection, self.folder = scene, connection, folder
         self.populations = [scene.populations[index] for index in indices]
-        self.store = SharedStore(os.path.join(folder, "shared"), forked=forked)
+        # the kinds the run's processes evaluated (solve.archetype_store), each read by the others
+        self.archetypes = archetype_store.ArchetypeStore(os.path.join(folder, "archetypes"))
+        self.store = SharedStore(os.path.join(folder, "shared"), forked=forked, external=self.archetypes)
         # {population name: its last publication's topology version, variables, shapes, MPG and the MPG's marks
         # (MPG.copy_marks)}: at the fork, the copy's state (the coordinator's copy is this DataStructure, forked), so
         # that the first publication is a delta and the copy keeps what did not change (its pages shared with the
@@ -584,9 +598,10 @@ class _Worker:
                     return
 
     def step(self, payload: dict) -> dict:
+        from openalea.metafspm.solve import archetype_store
         scene = self.scene
         results = {}
-        with scene.compute.limits():
+        with scene.compute.limits(), archetype_store.using(self.archetypes):
             for population in self.populations:
                 entry = payload.get(population.name)
                 if entry is None:
@@ -685,6 +700,37 @@ def _picklable_class(error):
         return RuntimeError
 
 
+def remove_stale_folders(base: str) -> list:
+    """The run folders (FOLDER_PREFIX<pid>-*) of *base* (/dev/shm) owned by this user whose coordinator is no longer
+    running removed: those of runs killed without their cleanup (out of memory, SIGKILL; the workers die with their
+    coordinator). The paths removed."""
+    removed = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return removed
+    for name in sorted(names):
+        if not name.startswith(FOLDER_PREFIX):
+            continue
+        pid = name[len(FOLDER_PREFIX):].split("-", 1)[0]
+        path = os.path.join(base, name)
+        try:
+            if not pid.isdigit() or os.stat(path).st_uid != os.getuid() or not os.path.isdir(path):
+                continue
+        except OSError:
+            continue
+        try:
+            os.kill(int(pid), 0)
+            continue                                    # running (or another user's process: kept)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(path)
+    return removed
+
+
 def _end_workers(handles: list, folder: str) -> None:
     """The workers stopped (asked, then killed after STOP_TIMEOUT), their folder removed: ProcessRunner.stop, and a
     finalizer when the scene is dropped."""
@@ -780,19 +826,24 @@ class ProcessRunner:
         load), each on its core set; the coordinator left on every processor."""
         from openalea.metafspm.compute import fork_safe_threading
         from openalea.metafspm.scene.shared import SharedStore
+        from openalea.metafspm.solve import archetype_store
         if self._handles:
             return
         self.check(scene)
         fork_safe_threading()
         if hasattr(scene.recorder, "wait_for_frames"):
             scene.recorder.wait_for_frames()             # no frame writer thread across the fork
-        base = "/dev/shm" if os.path.isdir("/dev/shm") else None
-        self._folder = tempfile.mkdtemp(prefix=f"metafspm-{os.getpid()}-", dir=base)
+        base = "/dev/shm" if os.path.isdir("/dev/shm") else tempfile.gettempdir()
+        remove_stale_folders(base)
+        self._folder = tempfile.mkdtemp(prefix=f"{FOLDER_PREFIX}{os.getpid()}-", dir=base)
         # The shared parts the coordinator's copies and the workers' DataStructures hold at the fork: referred to by
         # their id in the publications, each process keeping its own (the coordinator's pages shared with the
         # workers', counted once, instead of a copy of every part loaded)
         forked = _forked_parts(scene)
-        self._shared = SharedStore(os.path.join(self._folder, "shared"), forked=forked)
+        # the publications' archetypes read from the run's archetype store (the workers', solve.archetype_store):
+        # once for all the copies
+        self._archetypes = archetype_store.ArchetypeStore(os.path.join(self._folder, "archetypes"))
+        self._shared = SharedStore(os.path.join(self._folder, "shared"), forked=forked, external=self._archetypes)
         for population in scene.populations:
             self._synced[population.name] = _write_counts(population.data_structure)
         handles = []

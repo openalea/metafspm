@@ -278,6 +278,17 @@ the frames, the checkpoints and `scene.population(name).data_structure` read, un
   keeps its pages shared with the workers' (counted once); the parts loaded since that no copy refers to any more
   are let go, their files removed. `Compute(checks={"publication"})` compares every patched copy with the MPG sent
   whole beside the delta (`runner.check_publication`);
+- a reduction's archetypes are evaluated once per run (`solve.archetype_store`): a kind (its archetype key, its
+  templates' contents, its reduction's systems: a digest names it) one population evaluated is read by every other
+  needing it. In one process the populations hold one object per kind (`SequentialRunner`'s store, in memory); with
+  workers, a kind is written once (atomically, never rewritten) to the run's folder in `/dev/shm`, the worker that
+  first needs it claims it and the others needing it at the same step wait for its file instead of evaluating it
+  again (a claimer that ended leaves it to them); a publication refers to such a kind by its name
+  (`SharedStore(external=)`), so the coordinator reads it once for all its copies. A kind shared this way is never
+  released in place (`is_shared`): a population lets it go and its memory follows the last holder. The same bits as
+  each population evaluating its own: `Compute(checks={"archetypes"})` checks the kinds read too. A run's folder is
+  removed at its end and on a worker's failure; the folders of runs killed without their cleanup (out of memory) are
+  removed at the next run's start when their coordinator is no longer running (`runner.remove_stale_folders`);
 - before a worker's run, what the coordinator wrote into its copy since the last publication (the forcings, the
   planting mask, the exchanges into the population, a user's or an event's `set`: the DataStructure's write counters
   tell which) goes in the step message, with the write counts;

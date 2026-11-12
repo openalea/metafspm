@@ -4,6 +4,20 @@
 
 ### Added
 
+- Shared archetype store (route B, B4; `solve.archetype_store`): a reduction's archetype kind evaluated by one
+  population is read by every other one needing it, the same bits (`Compute(checks={"archetypes"})` checks the kinds
+  read too). In one process the populations hold one object per kind (`SequentialRunner`); with `Compute(processes=n)`
+  a kind is written once to the run's `/dev/shm` folder, claimed by the first worker needing it (the others wait for
+  it instead of evaluating it at the same step), and the publications refer to it by name
+  (`SharedStore(external=)`), the coordinator reading it once for all its copies. A shared kind is let go, never
+  released in place. Use case 1, 6 plants, first 12 h: 92.0 / 80.5 / 71.0 s at 1 / 2 / 4 processes -> 41.1 / 39.6 /
+  35.8 s, the archetypes' evaluation 60 / 95 / 145 -> 9 / 15 / 17 s, the scope's peak 6.4 / 7.1 / 7.4 -> 3.7 / 4.5 /
+  5.2 GB; tables and frames byte-identical at 1, 2 and 4. `runner.PER_PLANT_MB` and `COPY_PER_PLANT_MB` retuned
+  500 -> 250 from these runs.
+- Run folders of `Compute(processes=n)` left in `/dev/shm` by a coordinator killed without its cleanup (out of
+  memory) are removed at the next run's start once their process is gone (`runner.remove_stale_folders`, this user's
+  folders only); a worker's failure removes its run's folder.
+
 - MTG delta publication for `Compute(processes=n)`: when the topology moves, a worker sends its MPG's change since
   the last publication (`MPG.copy_delta`: the MPG's attributes but its structure caches, the property columns that
   may have changed; unchanged numeric columns left out) and the coordinator patches its copy in place

@@ -290,6 +290,20 @@ at 2 (was 7.5; 4.2 GB at 1), and 4 processes now fit: 53.0 s, 6.9 GB (out of mem
 processes, the publication 7.5 s at 2 and 9.2 s at 4 (was 11.4 and 13.5). Tables and frames byte-identical at every
 count; `Compute(checks={"publication"})` passed on the 6-plant day.
 
+With the shared archetype store (2026-11-12, B4: a reduction's archetype kind evaluated once for all the populations,
+in memory in one process, through `/dev/shm` between processes, a kind claimed by the first worker needing it):
+tables and frames byte-identical at 1, 2 and 4 processes and to before.
+
+| scene | processes | total before -> after (s) | archetypes' evaluation (s, summed over processes) | scope's peak (GB) |
+|---|---|---|---|---|
+| 6 plants, first 12 h | 1 / 2 / 4 | 92.0 / 80.5 / 71.0 -> **41.1 / 39.6 / 35.8** | 60 / 95 / 145 -> 9 / 15 / 17 | 6.4 / 7.1 / 7.4 -> 3.7 / 4.5 / 5.2 |
+| 4 plants, 2 days | 1 / 2 / 4 | 122.6 / 108.5 / 89.3 -> **68.6 / 71.8 / 60.8** (mean step 1.43 / 1.49 / 1.26) | 71 / 111 / 171 -> 18 / 24 / 31 | 4.7 / 5.8 / 6.3 -> 3.0 / 4.2 / 5.0 |
+| 6 plants, resumed at hour 48 for 24 h | 1 / 2 | 59.7 / 54.8 -> **41.2 / 42.8** | 22 / 33 -> 4 / 6 | 3.7 / 4.5 -> 3.2 / 4.2 |
+
+Growing the 6 plants to hour 48 at 1 process: 90.8 s, 3.7 GB (185.1 s, 6.5 GB before). One process gains most (its
+six populations evaluated each kind six times); processes still pay at the sowing (x1.15 at 4), not later on this
+laptop.
+
 **Scaling** (measured 2026-11-07 on the same laptop, metafspm f3a2148, GRANAP c626201, after the incremental
 topology updates; `benchmark.py --variability 1`: each plant its own root draws, the plants sharing their archetypes;
 under an 8 GB bound, the memory the scope's peak, the process pool of the time included (its processes in the

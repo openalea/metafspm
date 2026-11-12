@@ -205,6 +205,31 @@ def test_a_killed_worker_ends_the_run_naming_its_group(tmp_path):
     with open(tmp_path / "run.json") as file:
         assert json.load(file)["status"] == "failed"
     assert all(handle["pid"] is None for handle in scene.runner._handles)
+    assert not os.path.exists(scene.runner._folder)              # its shared memory removed with the run
+
+
+def test_the_folders_of_runs_killed_without_their_cleanup_are_removed_at_the_next_start(tmp_path):
+    import subprocess
+    ended = subprocess.Popen(["true"])
+    ended.wait()                                                # a coordinator that is no longer running
+    stale = tmp_path / f"{runner.FOLDER_PREFIX}{ended.pid}-abc"
+    running = tmp_path / f"{runner.FOLDER_PREFIX}{os.getpid()}-def"
+    other = tmp_path / "metafspm-notapid-ghi"
+    for folder in (stale, running, other):
+        (folder / "shared").mkdir(parents=True)
+    assert runner.remove_stale_folders(str(tmp_path)) == [str(stale)]
+    assert not stale.exists() and running.exists() and other.exists()
+
+
+def test_the_archetype_store_is_the_runs_and_its_folder_goes_with_it():
+    from openalea.metafspm.solve import archetype_store
+    scene = _scene(2)
+    scene.run()
+    folder = scene.runner._folder
+    assert archetype_store.current() is None                   # current while the populations run only
+    assert os.path.isdir(os.path.join(folder, "archetypes"))
+    scene.finish()
+    assert not os.path.exists(folder)
 
 
 def test_what_processes_cannot_run_is_refused():

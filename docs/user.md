@@ -1325,6 +1325,11 @@ scene.population("wheat3").data_structure.get("psi")        # the scene process'
   scene's process on the performance cores (use case 1, day 2-3): there, 6 plants run a day in 60 s at 1 process and
   57 s at 2 (the publication 4.3 s of it; the scope's peak 4.2 GB at 1, 5.1 GB at 2: the scene's copies keep the
   pages they share with the workers since the fork). Processes pay on machines of equal cores and enough memory, with plants of steps of seconds.
+  The reduction's archetypes are evaluated once for all the populations, at any process count (one population's
+  read by the others, in memory or through `/dev/shm`): the sowing's heavy first steps, where the plants' new
+  kinds dominate, are where processes pay most (use case 1, 6 plants, the first 12 hours: 41 s at 1 process, 40 s
+  at 2, 36 s at 4; the archetypes' evaluation 9 / 15 / 17 s); later, one process is as fast (the same day resumed at
+  hour 48: 41 s at 1, 43 s at 2).
 
 ### Repeated runs: `run_variants`
 
