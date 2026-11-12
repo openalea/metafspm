@@ -3,7 +3,7 @@ Matplotlib drawings of triangles (coupling.geometry.Triangles, or their vertices
 root system coloured per element (by its state, a value, its plant...) or per triangle.
 
     figure, axes = plt.subplots(subplot_kw=dict(projection="3d"))
-    draw(axes, component.triangles(), colors=value_colors(ds.get("light_fraction"), limits=(0., 1.)))
+    draw(axes, component.triangles(), colors=value_colors(data_structure.get("light_fraction"), limits=(0., 1.)))
 """
 import numpy as np
 

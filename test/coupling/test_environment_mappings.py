@@ -14,31 +14,31 @@ from openalea.metafspm.coupling.cross import Exchanges, LayerMapping
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 
 from growth import DOC, RootGrowthProbe
 
 
 
 def _population(sizes):
-    table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., z=0., rotation=0.,
-                               scenario={"parameters": {"n_segments": n}}) for i, n in enumerate(sizes)])
-    g, _ = build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0., y=0., depth=0., rotation=0.,
+                               scenario={"n_segments": n}) for i, n in enumerate(sizes)])
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 @dataclass
 class Wheat(FunctionalComponent):
-    leaf_area: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    temperature: float = state_variable(**DOC, initialize=20., scale=scales.SubOrgan, state_variable_type="intensive")
-    mass: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    dry_matter: float = state_variable(**DOC, initialize=2., scale=scales.Plant, state_variable_type="extensive")
-    air_temperature: float = input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
-                                            state_variable_type="intensive")
-    rain_share: float = input_variable(**DOC, by="Weather", initialize=0., scale=scales.SubOrgan,
-                                       state_variable_type="extensive")
+    leaf_area: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    temperature: float = state_variable(**DOC, default=20., scale=scales.SubOrgan, kind="intensive")
+    mass: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    dry_matter: float = state_variable(**DOC, default=2., scale=scales.Plant, kind="extensive")
+    air_temperature: float = input_variable(**DOC, by="Weather", default=0., scale=scales.SubOrgan,
+                                            kind="intensive")
+    rain_share: float = input_variable(**DOC, by="Weather", default=0., scale=scales.SubOrgan,
+                                       kind="extensive")
 
 
 @dataclass
@@ -52,15 +52,15 @@ def _scalar(**options):
 
 @dataclass
 class Weather(FunctionalComponent):
-    lai: float = input_variable(**DOC, by="Wheat", initialize=0., **_scalar(state_variable_type="extensive"))
-    canopy_temperature: float = input_variable(**DOC, by="Wheat", initialize=-1.,
-                                               **_scalar(state_variable_type="intensive"))
-    weighted_temperature: float = input_variable(**DOC, by="Wheat", initialize=-1.,
-                                                 **_scalar(state_variable_type="intensive"))
-    total_dry_matter: float = input_variable(**DOC, by="Wheat", initialize=0.,
-                                             **_scalar(state_variable_type="extensive"))
-    air_temperature: float = state_variable(**DOC, initialize=12., **_scalar(state_variable_type="intensive"))
-    rain: float = state_variable(**DOC, initialize=6., **_scalar(state_variable_type="extensive"))
+    lai: float = input_variable(**DOC, by="Wheat", default=0., **_scalar(kind="extensive"))
+    canopy_temperature: float = input_variable(**DOC, by="Wheat", default=-1.,
+                                               **_scalar(kind="intensive"))
+    weighted_temperature: float = input_variable(**DOC, by="Wheat", default=-1.,
+                                                 **_scalar(kind="intensive"))
+    total_dry_matter: float = input_variable(**DOC, by="Wheat", default=0.,
+                                             **_scalar(kind="extensive"))
+    air_temperature: float = state_variable(**DOC, default=12., **_scalar(kind="intensive"))
+    rain: float = state_variable(**DOC, default=6., **_scalar(kind="extensive"))
 
 
 def _scene():
@@ -107,27 +107,27 @@ def test_environment_scalars_reach_every_entity():
 
 @dataclass
 class SoilTemperatureColumn(FunctionalComponent):
-    moisture: float = input_variable(**DOC, by="SoilWater", initialize=0., location="cell",
-                                     state_variable_type="intensive")
-    uptake_profile: float = input_variable(**DOC, by="SoilWater", initialize=0., location="cell",
-                                           state_variable_type="extensive")
-    temperature: float = state_variable(**DOC, initialize=15., location="cell", state_variable_type="intensive")
-    heat: float = state_variable(**DOC, initialize=1., location="cell", state_variable_type="extensive")
+    moisture: float = input_variable(**DOC, by="SoilWater", default=0., location="cell",
+                                     kind="intensive")
+    uptake_profile: float = input_variable(**DOC, by="SoilWater", default=0., location="cell",
+                                           kind="extensive")
+    temperature: float = state_variable(**DOC, default=15., location="cell", kind="intensive")
+    heat: float = state_variable(**DOC, default=1., location="cell", kind="extensive")
 
 
 @dataclass
 class SoilWater(FunctionalComponent):
-    moisture: float = state_variable(**DOC, initialize=0.3, location="cell", state_variable_type="intensive")
-    uptake: float = state_variable(**DOC, initialize=0., location="cell", state_variable_type="extensive")
-    temperature: float = input_variable(**DOC, by="SoilTemperatureColumn", initialize=0., location="cell",
-                                        state_variable_type="intensive")
-    heat: float = input_variable(**DOC, by="SoilTemperatureColumn", initialize=0., location="cell",
-                                 state_variable_type="extensive")
+    moisture: float = state_variable(**DOC, default=0.3, location="cell", kind="intensive")
+    uptake: float = state_variable(**DOC, default=0., location="cell", kind="extensive")
+    temperature: float = input_variable(**DOC, by="SoilTemperatureColumn", default=0., location="cell",
+                                        kind="intensive")
+    heat: float = input_variable(**DOC, by="SoilTemperatureColumn", default=0., location="cell",
+                                 kind="extensive")
 
 
 def _layers():
-    column = ArrayDataStructure(shape=(4,), dx=0.25)                 # layers of 0.25 m
-    grid = ArrayDataStructure(shape=(2, 3, 5), dx=(0.1, 0.1, 0.2))    # layers of 0.2 m
+    column = ArrayDataStructure(shape=(4,), spacing=0.25)                 # layers of 0.25 m
+    grid = ArrayDataStructure(shape=(2, 3, 5), spacing=(0.1, 0.1, 0.2))    # layers of 0.2 m
     col, soil = SoilTemperatureColumn(data_structure=column), SoilWater(data_structure=grid)
     translator = (Translator()
                   .link("SoilTemperatureColumn", "moisture", "SoilWater", {"moisture": 1.})
@@ -151,7 +151,7 @@ def test_a_column_reads_the_grid_by_layer_overlaps():
     layer_mean = grid.get("moisture").mean(axis=(0, 1))
     layer_total = grid.get("uptake").sum(axis=(0, 1))
     for i in range(4):
-        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * g, 0.2 * (g + 1)) for g in range(5)])
+        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * mtg, 0.2 * (mtg + 1)) for mtg in range(5)])
         assert column.get("moisture")[i] == pytest.approx((w * layer_mean).sum() / w.sum())
         assert column.get("uptake_profile")[i] == pytest.approx((w / 0.2 * layer_total).sum())
     assert column.get("uptake_profile").sum() == pytest.approx(grid.get("uptake").sum())     # conserved
@@ -164,7 +164,7 @@ def test_a_grid_reads_the_column_by_layer_overlaps():
     exchanges.exchange(into=grid)
     temperature = grid.get("temperature")
     assert (temperature == temperature[:1, :1, :]).all()                                     # broadcast in x, y
-    for g in range(5):
-        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * g, 0.2 * (g + 1)) for i in range(4)])
-        assert temperature[0, 0, g] == pytest.approx((w * [10., 12., 14., 16.]).sum() / w.sum())
+    for layer in range(5):
+        w = np.array([_overlap(0.25 * i, 0.25 * (i + 1), 0.2 * layer, 0.2 * (layer + 1)) for i in range(4)])
+        assert temperature[0, 0, layer] == pytest.approx((w * [10., 12., 14., 16.]).sum() / w.sum())
     assert grid.get("heat").sum() == pytest.approx(10.)                                       # conserved

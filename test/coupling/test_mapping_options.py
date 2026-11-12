@@ -16,7 +16,6 @@ from openalea.metafspm.coupling.declaration import DeclarationError
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure, MPGDataStructure
-from openalea.metafspm.scene.scene import load_translator
 
 import doubles_ds
 from growth import DOC
@@ -25,16 +24,16 @@ from simple_seedling import generate_simple_mpg_seedling
 
 @dataclass
 class PlantSide(FunctionalComponent):
-    exudation: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan, state_variable_type="extensive")
-    soil_nitrate: float = input_variable(**DOC, by="SoilSide", initialize=-1., scale=scales.SubOrgan,
-                                         state_variable_type="intensive")
+    exudation: float = state_variable(**DOC, default=1., scale=scales.SubOrgan, kind="extensive")
+    soil_nitrate: float = input_variable(**DOC, by="SoilSide", default=-1., scale=scales.SubOrgan,
+                                         kind="intensive")
 
 
 @dataclass
 class SoilSide(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="PlantSide", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    soil_nitrate: float = state_variable(**DOC, initialize=5., location="cell", state_variable_type="intensive")
+    exudation: float = input_variable(**DOC, by="PlantSide", default=0., location="cell",
+                                      kind="extensive")
+    soil_nitrate: float = state_variable(**DOC, default=5., location="cell", kind="intensive")
 
 
 def _deepest(plants):
@@ -44,7 +43,7 @@ def _deepest(plants):
 
 def _plant_and_soil(mask=None):
     plants = doubles_ds.make_chain_plant_ds()                    # 3 segments, depths 0.02, 0.04, 0.06
-    soil = ArrayDataStructure(shape=(1, 1, 2), dx=0.05)
+    soil = ArrayDataStructure(shape=(1, 1, 2), spacing=0.05)
     plant, grid = PlantSide(data_structure=plants), SoilSide(data_structure=soil)
     translator = (Translator()
                   .link("SoilSide", "exudation", "PlantSide", {"exudation": 1.})
@@ -98,8 +97,8 @@ def test_an_unknown_mapping_method_is_refused():
 
 @dataclass
 class LightSide(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="PlantSide", initialize=0., scale=scales.SubOrgan,
-                                      state_variable_type="extensive")
+    exudation: float = input_variable(**DOC, by="PlantSide", default=0., scale=scales.SubOrgan,
+                                      kind="extensive")
 
 
 def test_a_union_refuses_an_aggregation():
@@ -113,21 +112,21 @@ def test_a_union_refuses_an_aggregation():
 
 @dataclass
 class Column(FunctionalComponent):
-    temperature: float = state_variable(**DOC, initialize=10., location="cell")
+    temperature: float = state_variable(**DOC, default=10., location="cell")
 
 
 @dataclass
 class Grid(FunctionalComponent):
-    temperature: float = input_variable(**DOC, by="Column", initialize=0., location="cell")
+    temperature: float = input_variable(**DOC, by="Column", default=0., location="cell")
 
 
 def test_a_column_grid_link_needs_a_kind_or_an_aggregation():
-    column = ArrayDataStructure(shape=(4,), dx=0.25)
-    grid = ArrayDataStructure(shape=(2, 3, 5), dx=(0.1, 0.1, 0.2))
+    column = ArrayDataStructure(shape=(4,), spacing=0.25)
+    grid = ArrayDataStructure(shape=(2, 3, 5), spacing=(0.1, 0.1, 0.2))
     components = (Column(data_structure=column), Grid(data_structure=grid))
     mapping = LayerMapping(column, grid, axis="z")
     translator = Translator().link("Grid", "temperature", "Column", {"temperature": 1.})
-    with pytest.raises(DeclarationError, match="a column <-> grid link needs a kind or aggregation="):
+    with pytest.raises(DeclarationError, match="does not imply one: give aggregation="):
         Exchanges(translator, components, [mapping])
     explicit = Translator().link("Grid", "temperature", "Column", {"temperature": 1.}, aggregation="mean")
     Exchanges(explicit, components, [mapping]).exchange(into=grid)
@@ -146,16 +145,16 @@ NESTED = {"SoilSide": {"PlantSide": {"exudation": {"exudation": "1 + 1"}}}}
 
 def test_a_scene_accepts_every_translator_form(tmp_path):
     translator = Translator().link("SoilSide", "exudation", "PlantSide", {"exudation": 2.})
-    assert load_translator(translator) is translator
-    assert _links(load_translator(NESTED)) == EXPECTED
+    assert Translator.load(translator) is translator
+    assert _links(Translator.load(NESTED)) == EXPECTED
     module = tmp_path / "scene_translator.py"
     module.write_text("from openalea.metafspm.coupling.translator import Translator\n"
                       "translator = Translator().link('SoilSide', 'exudation', 'PlantSide', {'exudation': 2.})\n")
-    assert _links(load_translator(str(module))) == EXPECTED
+    assert _links(Translator.load(str(module))) == EXPECTED
     path = tmp_path / "scene_translator.yaml"
     path.write_text(yaml.safe_dump(NESTED))
-    assert _links(load_translator(path)) == EXPECTED
-    assert load_translator(None).links == []
+    assert _links(Translator.load(path)) == EXPECTED
+    assert Translator.load(None).links == []
 
 
 # ---------------------------------------------------------------- long-form links
@@ -186,32 +185,52 @@ def test_long_form_links_round_trip_through_the_nested_and_yaml_formats(tmp_path
     assert _options(Translator.from_dict(translator.to_nested())) == _options(translator)
     path = tmp_path / "translator.yaml"
     path.write_text(yaml.safe_dump(translator.to_nested()))
-    assert _options(Translator.from_yaml(path)) == _options(translator)
+    assert _options(Translator.load(path)) == _options(translator)
 
 
 # ---------------------------------------------------------------- a same-name link stating its scale
 
 @dataclass
 class Provider(FunctionalComponent):
-    uptake: float = state_variable(**DOC, initialize=2., scale=scales.SubOrgan, state_variable_type="extensive")
+    uptake: float = state_variable(**DOC, default=2., scale=scales.SubOrgan, kind="extensive")
 
 
 @dataclass
 class Receiver(FunctionalComponent):
-    uptake: float = input_variable(**DOC, by="Provider", initialize=0., scale=scales.SubOrgan,
-                                   state_variable_type="extensive")
+    uptake: float = input_variable(**DOC, by="Provider", default=0., scale=scales.SubOrgan,
+                                   kind="extensive")
 
 
 def test_a_same_name_link_stating_its_scale_is_an_identity():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
     model = CompositeModel()
-    model.components = [Provider(data_structure=ds), Receiver(data_structure=ds)]
+    model.components = [Provider(data_structure=data_structure), Receiver(data_structure=data_structure)]
     translator = Translator().link("Receiver", "uptake", "Provider", {"uptake": 1.}, scale=scales.SubOrgan,
                                    source_scale=scales.SubOrgan)
     model._couple_on_data_structures(translator)
-    assert "uptake" not in ds.__dict__.get("_derived", {})
-    ds.set("uptake", 3.)
-    np.testing.assert_allclose(ds.get("uptake"), 3.)
+    assert "uptake" not in data_structure.__dict__.get("_derived", {})
+    data_structure.set("uptake", 3.)
+    np.testing.assert_allclose(data_structure.get("uptake"), 3.)
+
+
+def test_the_soil_surface_is_the_grid_top_and_the_parts_outside_are_counted():
+    """CrossMapping(soil_surface=): the grid's depth below that height (flip_z); the entities with a part outside the
+    grid along its non-periodic axes are counted (outside()), warned once."""
+    import warnings
+    plants = doubles_ds.make_chain_plant_ds()                    # middles 0.02, 0.04, 0.06 below 0
+    soil = ArrayDataStructure(shape=(1, 1, 2), spacing=0.05)
+    by_depth = np.argsort(-(plants.get("z1") + plants.get("z2")))
+    level = CrossMapping(plants, soil, periodic=(True, True, False))
+    rows, columns, _ = level.incidence()
+    assert columns[np.argsort(rows)][by_depth].tolist() == [0, 0, 1] and level.outside().size == 0
+    lowered = CrossMapping(plants, soil, periodic=(True, True, False), soil_surface=-0.03)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rows, columns, _ = lowered.incidence()
+        lowered.refresh()
+        lowered.incidence()
+    assert columns[np.argsort(rows)][by_depth].tolist() == [0, 0, 0]       # the first above the soil: in the top
+    assert lowered.outside().size == 1 and sum("outside the grid" in str(w.message) for w in caught) == 1

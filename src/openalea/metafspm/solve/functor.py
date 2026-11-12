@@ -12,6 +12,7 @@ class Functor:
         self.class_qualname = self.fun.__qualname__.rsplit('.', 1)[0]
         self.class_name = self.class_qualname.rsplit('.', 1)[-1]
         self.family = f"{self.fun.__module__}:{self.class_qualname}"
+        self.timing_name = f"functor.{self.class_name}.{self.name}"     # run.json's "compute"/"timing" entry
         self.iterating = iteraring
         self.total = total
         self.input_names = self.inputs(self.fun)
@@ -26,18 +27,18 @@ class Functor:
         return arguments
     
     @staticmethod
-    def _annotated_dict(func):
+    def _annotated_dict(function):
         """Whether the step is annotated `-> dict` (its outputs named by the keys it returns)."""
-        returned = get_type_hints(func).get("return")
+        returned = get_type_hints(function).get("return")
         return returned is dict or get_origin(returned) is dict
 
-    def num_outputs(self, func):
+    def num_outputs(self, function):
         """
         Convention: multiple outputs must be annotated as `-> tuple[...]`.
         Returns an int, "variadic" for tuple[T, ...], or 1 for non-tuple returns.
         Returns None if there's no return annotation.
         """
-        ret = get_type_hints(func).get("return")
+        ret = get_type_hints(function).get("return")
         # print(ret)
         if ret is None:
             return 1  # no annotation → unknown
@@ -49,52 +50,104 @@ class Functor:
             return 1
         
 
-    def _call_on_data_structure(self, instance, ds):
+    def _call_on_data_structure(self, instance, data_structure):
         """
         Evaluate the step on DataStructure arrays and write the outputs in place.
         Vectorised by default: one call with whole arrays; functions marked vectorized=False are called per element.
         When the DataStructure defines the step's mask (default "active"), arguments at the mask's location are restricted to the selected entities and outputs at that location
         are written back on them only: the other entities keep their values.
         """
-        args, locations = self._arguments(instance, ds)
-        mask, mask_location = self._mask(instance, ds)
+        args, locations = self._arguments(instance, data_structure)
+        mask, mask_location = self._mask(instance, data_structure)
         if mask is not None:
             args = [a[mask] if location == mask_location else a for a, location in zip(args, locations)]
-        instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps
-        try:
-            out = self._evaluate(instance, args)
-        finally:
-            instance.__dict__["_in_equation"] = False
+        key = self._memo_key(instance, data_structure, args, mask) if getattr(self.fun, "__memo__", False) else None
+        kept = instance.__dict__.get("_step_memos", {}).get(self.name) if key is not None else None
+        if kept is not None and kept[0] == key:
+            out = _copied(kept[1])                      # the same values: the last outputs
+        else:
+            instance.__dict__["_in_equation"] = True        # self.<parameter> is refused inside steps
+            try:
+                out = self._evaluate(instance, args)
+            finally:
+                instance.__dict__["_in_equation"] = False
+            if key is not None:
+                instance.__dict__.setdefault("_step_memos", {})[self.name] = (key, _copied(out))
         if out is None:            # a step returning None writes nothing (e.g. an inherited step disabled)
             return
-        self._write_outputs(instance, ds, out, args, mask, mask_location)
+        self._write_outputs(instance, data_structure, out, args, mask, mask_location)
 
-    def _arguments(self, instance, ds):
+    def _memo_key(self, instance, data_structure, args, mask) -> str:
+        """A memoized step's key: the structure, its component's parameters (their versions) and settings, the mask
+        and its arguments' values."""
+        from openalea.metafspm.solve.memo import content_key
+        cls = type(instance)
+        structure = data_structure.structure_stamp() if hasattr(data_structure, "structure_stamp") else getattr(data_structure, "topology_version", None)
+        parameters = tuple(data_structure.write_count(name) if data_structure.has(name) else -1
+                           for name in (cls.declared_parameters() if hasattr(cls, "declared_parameters") else ()))
+        settings = tuple(repr(getattr(instance, name)) for name in (
+            cls.declared_settings() if hasattr(cls, "declared_settings") else ()))
+        return content_key(repr((structure, parameters, settings)), 0 if mask is None else mask,
+                           *(a for a in args if a is not None))
+
+    def _arguments(self, instance, data_structure):
         """
         The step's arguments and their locations. Parameters stored per plant (or as scalars) come broadcast to the
-        step's location, the location of its other arguments (nodes, or cells on grids), as read-only views.
+        step's location, the location of its other arguments (nodes, or cells on grids), as read-only views. A
+        variable the component reads at the nodes from a coarser scale (declared mapped down, e.g. a SubOrgan's
+        length broadcast to its Compartments) while another component holds it at that scale comes mapped too.
         """
         specs = getattr(instance, "_variable_specs", {})
         settings = set(type(instance).declared_settings()) if hasattr(type(instance), "declared_settings") else set()
-        is_parameter = [name not in settings and getattr(specs.get(name), "variable_type", None) == "parameter"
-                        and ds.location(name) not in ("node", "edge", "cell") for name in self.input_names]
-        others = [ds.location(name) for name, p in zip(self.input_names, is_parameter)
-                  if not p and name not in settings]
-        stores = ds._var_stores()
-        step_location = next((loc for loc in others if loc in ("node", "edge", "cell")),
-                             "node" if "node" in stores else "cell")
+        optional = getattr(type(instance), "_optional", lambda name: False)
+        missing = {name for name in self.input_names if name in specs and not data_structure.has(name) and optional(name)}
+
+        def where(name):                       # an optional input nothing provides: at its declared location
+            return specs[name].location if name in missing else data_structure.location(name)
+
+        is_parameter = [name not in settings and getattr(specs.get(name), "role", None) == "parameter"
+                        and where(name) not in ("node", "edge", "cell") for name in self.input_names]
+        from openalea.metafspm.coupling.declaration import held_at_scale, _mapped_read
+        mapped = [name not in settings and not p and held_at_scale(specs.get(name), data_structure)
+                  for name, p in zip(self.input_names, is_parameter)]
+        others = [specs[name].location if m else where(name)
+                  for name, p, m in zip(self.input_names, is_parameter, mapped) if not p and name not in settings]
+        stores = data_structure._var_stores()
+        step_location = next((loc for loc in others if loc in ("node", "edge", "cell")), None)
+        if step_location is None:              # no argument per node: its outputs' location (e.g. the plants'), else nodes
+            step_location = self._outputs_location(instance, specs, stores) or ("node" if "node" in stores else "cell")
         args, locations = [], []
-        for name, parameter in zip(self.input_names, is_parameter):
+        for name, parameter, down in zip(self.input_names, is_parameter, mapped):
             if name in settings:                        # a setting: the value itself
                 args.append(getattr(instance, name))
                 locations.append(None)
+            elif down:
+                args.append(_mapped_read(data_structure, specs[name]))
+                locations.append(specs[name].location)
+            elif name in missing:
+                spec = specs[name]                        # an optional input nothing provides: its default
+                args.append(np.full(tuple(data_structure._location_shape(spec.location)) + tuple(spec.shape or ()),
+                                    np.nan if spec.default is None else spec.default))
+                locations.append(spec.location)
             elif parameter:
-                args.append(ds.parameter_view(name, step_location))
+                args.append(data_structure.parameter_view(name, step_location))
                 locations.append(step_location)
             else:
-                args.append(ds.get(name))
-                locations.append(ds.location(name))
+                args.append(data_structure.get(name))
+                locations.append(data_structure.location(name))
         return args, locations
+
+    def _outputs_location(self, instance, specs, stores):
+        """The one location of the step's declared outputs (its method's name, its declared output locations), or None:
+        a step of coarse outputs (a plant's) gets its parameters there."""
+        declared = getattr(self.fun, "__output_locations__", {})
+        locations = {specs[name].location for name in [self.name, *declared] if name in specs}
+        locations |= set(declared.values())
+        if len(locations) == 1:
+            (location,) = locations
+            if location in stores:
+                return location
+        return None
 
     def _evaluate(self, instance, args):
         if getattr(self.fun, "__vectorized__", True):
@@ -115,7 +168,7 @@ class Functor:
                 out = np.asarray(per_element)
         return out
 
-    def _write_outputs(self, instance, ds, out, args, mask, mask_location):
+    def _write_outputs(self, instance, data_structure, out, args, mask, mask_location):
         if isinstance(out, dict):                       # named outputs: {name: values}
             outputs = list(out.items())
         elif self.returns_dict:
@@ -139,75 +192,79 @@ class Functor:
         before = instance._before_new_nodes() if new_nodes else None
         declared = getattr(self.fun, "__output_locations__", {})
         for name, values in outputs:
-            values = np.asarray(values, dtype=float)
+            values = _output_array(values, data_structure.get(name).dtype if data_structure.has(name) else None)
             masked = (mask is not None and values.ndim >= 1 and values.shape[0] == int(mask.sum())
-                      and (values.ndim == 1 or (ds.has(name) and ds.get(name).shape[1:] == values.shape[1:])))
-            if not ds.has(name):
+                      and (values.ndim == 1 or (data_structure.has(name) and data_structure.get(name).shape[1:] == values.shape[1:])))
+            if not data_structure.has(name):
                 if masked and name not in declared:
-                    from openalea.metafspm.solve.decorator import infer_output_location
-                    location = infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape,
-                                                     {mask_location: values.shape})
+                    from openalea.metafspm.solve.decorator import _undeclared_output
+                    _undeclared_output(f"{type(instance).__name__}.{self.name}", name)
                 else:
-                    location = self._output_location(instance, ds, name, values, declared)
-                ds.register(name, location=location)
-            if masked and ds.location(name) == mask_location:
-                full = np.array(ds.get(name), dtype=float)
+                    location = self._output_location(instance, data_structure, name, values, declared)
+                data_structure.register(name, location=location)
+            if masked and data_structure.location(name) == mask_location:
+                full = np.array(data_structure.get(name), dtype=object if values.dtype == object else float)
                 full[mask] = values
                 values = full
-            ds.set(name, values)
+            data_structure.set(name, values)
         for new in new_nodes:
             instance._create_nodes(new, before)
             before = instance._before_new_nodes() if before is not None else None
 
-    def _mask(self, instance, ds):
+    def _mask(self, instance, data_structure):
         """
-        (mask, location) restricting this step, or (None, None): the step's filters, and the DataStructure's "active"
+        (mask, location) restricting this step, or (None, None): the step's filter (where=), and the DataStructure's "active"
         mask unless include_inactive (both at the same location; an edge filter is not restricted by the active nodes).
         """
-        if not hasattr(ds, "has_mask"):
+        if not hasattr(data_structure, "has_mask"):
             return None, None
-        masks = ds.__dict__.get("_masks", {})
+        masks = data_structure.__dict__.get("_masks", {})
         active = None
-        if not getattr(self.fun, "__include_inactive__", False) and ds.has_mask("active"):
-            active = (ds.mask("active"), masks["active"]["location"])
-        rule = getattr(self.fun, "__filters__", None)
+        if not getattr(self.fun, "__include_inactive__", False) and data_structure.has_mask("active"):
+            active = (data_structure.mask("active"), masks["active"]["location"])
+        rule = getattr(self.fun, "__where__", None)
         if rule is None:
             return active if active is not None else (None, None)
-        from openalea.metafspm.solve.decorator import Filters
-        location = self._filters_location(ds, rule)
-        name = Filters(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(ds)
-        mask, location = ds.mask(name), ds.__dict__["_masks"][name]["location"]
+        from openalea.metafspm.solve.decorator import _EntityFilter
+        location = self._filter_location(data_structure, rule)
+        name = _EntityFilter(rule, f"{type(instance).__name__}.{self.name}", location).mask_name(data_structure)
+        mask, location = data_structure.mask(name), data_structure.__dict__["_masks"][name]["location"]
         if active is not None and active[1] == location:
             mask = mask & active[0]
         return mask, location
 
     @staticmethod
-    def _filters_location(ds, rule):
-        """The entities a step's filters select: edges when every key is an edge variable, else nodes (or cells)."""
-        if isinstance(rule, dict) and all(ds.has(key) and ds.location(key) == "edge" for key in rule):
+    def _filter_location(data_structure, rule):
+        """The entities a step's filter selects: edges when every key is an edge variable, else nodes (or cells)."""
+        if isinstance(rule, dict) and all(data_structure.has(key) and data_structure.location(key) == "edge" for key in rule):
             return "edge"
         return "node"
 
-    def _output_location(self, instance, ds, name, values, declared):
+    def _output_location(self, instance, data_structure, name, values, declared):
         """
         Location of an output that is not a registered variable: given by
-        the step decorator, "scalar" for total steps and 0-d values, else inferred from its shape when unambiguous.
+        the step decorator, "scalar" for total steps and 0-d values, else an error (its location must be declared).
         """
         if name in declared:
             location = declared[name]
-            if hasattr(ds, "_mtg"):
+            if hasattr(data_structure, "_mtg"):
                 from openalea.metafspm.coupling.declaration import resolve_location
-                location = resolve_location(ds, location)
+                location = resolve_location(data_structure, location)
             return location
         if self.total or values.ndim == 0:
             return "scalar"
-        from openalea.metafspm.solve.decorator import infer_output_location
-        stores = ds._var_stores()
-        shapes = {location: ds._location_shape(location) for location in ("node", "edge", "cell") if location in stores}
-        return infer_output_location(f"{type(instance).__name__}.{self.name}", name, values.shape, shapes)
+        from openalea.metafspm.solve.decorator import _undeclared_output
+        _undeclared_output(f"{type(instance).__name__}.{self.name}", name)
 
     def __call__(self, instance, data, *args):
-        """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance)."""
+        """Run the step on *data*, the component's DataStructure (iterating steps only receive the instance). Its
+        wall time and calls are counted under functor.<Class>.<step> (Compute.timed: run.json's "compute"/"timing"),
+        inclusive of the steps it runs inside (e.g. a reduction's library components evaluating its archetypes)."""
+        from openalea.metafspm.compute import Compute
+        with Compute.current().timed(self.timing_name):
+            self._run(instance, data)
+
+    def _run(self, instance, data):
         if self.iterating:
             # Steps without arguments of a StructuralComponent edit the MPG: the component synchronises around them
             run_mpg_step = getattr(instance, "_run_mpg_step", None)
@@ -220,3 +277,26 @@ class Functor:
         else:
             raise TypeError(f"Step {self.class_name}.{self.name} needs a DataStructure (got {type(data).__name__}); "
                             "props-based components were removed, see docs/migration.md")
+
+
+def _copied(out):
+    """A step's outputs with their arrays copied (kept, or given again, without sharing them)."""
+    if isinstance(out, np.ndarray):
+        return out.copy()
+    if isinstance(out, dict):
+        return {name: _copied(value) for name, value in out.items()}
+    if isinstance(out, tuple):
+        return tuple(_copied(value) for value in out)
+    return out
+
+
+def _output_array(values, stored_dtype=None) -> np.ndarray:
+    """A step's output as an array: floats, or objects (one record per entity: a tuple, a string, a dict) for a
+    variable of dtype object or values that are objects."""
+    if stored_dtype == object or (isinstance(values, np.ndarray) and values.dtype == object):
+        if isinstance(values, np.ndarray) and values.dtype == object:
+            return values
+        out = np.empty(len(values), dtype=object)
+        out[:] = list(values)
+        return out
+    return np.asarray(values, dtype=float)

@@ -21,24 +21,26 @@ import pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "helpers"))
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
+from openalea.metafspm.scene.environment import EnvironmentModel
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.component import (FunctionalComponent, StructuralComponent, input_variable,
                                                    parameter, state_variable)
 from openalea.metafspm.coupling.translator import Translator
 from openalea.metafspm.data_structure.configs import PropsConfig, ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
-from openalea.metafspm.scene.scene import Scene
+from openalea.metafspm.scene.population import Planting, planting
+from openalea.metafspm.scene.scene import Scene, SceneRecorder
 from openalea.metafspm.solve.decorator import actual, edge_law, graph_system, node_balance, rate, segmentation, state
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT = 3600.
 SEGMENT_LENGTH = 0.01
 MAIN, LATERALS, LATERAL = 1000, 5, 200          # 2 000 segments per plant
 
 
-def _node(kind="descriptor", initialize=0., **options):
-    return state_variable(**DOC, initialize=initialize, scale=scales.SubOrgan, state_variable_type=kind, **options)
+def _node(kind="descriptor", default=0., **options):
+    return state_variable(**DOC, default=initialize, scale=scales.SubOrgan, kind=kind, **options)
 
 
 # ---------------------------------------------------------------- plant model
@@ -46,7 +48,7 @@ def _node(kind="descriptor", initialize=0., **options):
 @dataclass
 class BenchGrowth(StructuralComponent):
     """Apices elongate (array-style); those longer than a segment are cut, all at once (bulk creation)."""
-    length: float = _node(initialize=SEGMENT_LENGTH)
+    length: float = _node(default=SEGMENT_LENGTH)
     is_apex: float = _node()
     x1: float = _node(on_grow="inherit")
     x2: float = _node(on_grow="inherit")
@@ -57,19 +59,19 @@ class BenchGrowth(StructuralComponent):
     elongation: float = parameter(**DOC, by="", default=0.3 * SEGMENT_LENGTH)
 
     @classmethod
-    def initiate_plant(cls, g, plant, parameters):
-        s = g.scales
-        x, y, z = (float(g.property(name)[plant]) for name in ("x", "y", "z"))
-        axis = g.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=g.labels.Axis.Root))
-        gu = g.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=g.labels.GrowthUnit.Root))
-        phytomer = g.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=g.labels.Phytomer.Root))
-        organ = g.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=g.labels.Organ.RootInternode))
-        props = PropsConfig(scale=s.SubOrgan, edge_type='<', label=g.labels.SubOrgan.RootSegment)
-        first = g.add_component(organ, **dict(props, edge_type='/'))
+    def initiate_plant(cls, mtg, plant, parameters):
+        s = mtg.scales
+        x, y, z = (float(mtg.property(name)[plant]) for name in ("x", "y", "z"))
+        axis = mtg.add_component(plant, **PropsConfig(scale=s.Axis, edge_type='/', label=mtg.labels.Axis.Root))
+        gu = mtg.add_component(axis, **PropsConfig(scale=s.GrowthUnit, edge_type='/', label=mtg.labels.GrowthUnit.Root))
+        phytomer = mtg.add_component(gu, **PropsConfig(scale=s.Phytomer, edge_type='/', label=mtg.labels.Phytomer.Root))
+        organ = mtg.add_component(phytomer, **PropsConfig(scale=s.Organ, edge_type='/', label=mtg.labels.Organ.RootInternode))
+        props = PropsConfig(scale=s.SubOrgan, edge_type='<', label=mtg.labels.SubOrgan.RootSegment)
+        first = mtg.add_component(organ, **dict(props, edge_type='/'))
 
         def chain(parent, count):          # vids are consecutive: each new segment's parent is the previous one
-            start = g._id + 1
-            return g.add_components_bulk(organ, count, topo_parents=[parent] + list(range(start, start + count - 1)),
+            start = mtg._id + 1
+            return mtg.add_components_bulk(organ, count, topo_parents=[parent] + list(range(start, start + count - 1)),
                                          **props)
 
         main = [first] + chain(first, MAIN - 1)
@@ -77,7 +79,7 @@ class BenchGrowth(StructuralComponent):
         for k in range(LATERALS):
             base = main[(k + 1) * MAIN // (LATERALS + 1)]
             lateral = chain(base, LATERAL)
-            g.property("edge_type")[lateral[0]] = '+'
+            mtg.set_values("edge_type", [lateral[0]], ['+'])
             vids += lateral
             depth += [depth[main.index(base)]] * LATERAL
         tips = {main[-1]} | {vids[MAIN + (k + 1) * LATERAL - 1] for k in range(LATERALS)}
@@ -85,7 +87,7 @@ class BenchGrowth(StructuralComponent):
             top = z - depth[i] * SEGMENT_LENGTH
             for name, value in (("length", SEGMENT_LENGTH), ("is_apex", float(v in tips)), ("x1", x), ("x2", x),
                                 ("y1", y), ("y2", y), ("z1", top), ("z2", top - SEGMENT_LENGTH)):
-                g.property(name)[v] = value
+                mtg.set_values(name, [v], [value])
 
     @actual
     def _length(self, length, is_apex, elongation):
@@ -93,22 +95,22 @@ class BenchGrowth(StructuralComponent):
 
     @segmentation
     def _segmentation(self):
-        g, ds = self.mtg, self.data_structure
-        ids = np.asarray(ds.entity_ids("node"))
-        length, apex = np.asarray(ds.get("length")), np.asarray(ds.get("is_apex")) > 0
+        mtg, data_structure = self.mtg, self.data_structure
+        ids = np.asarray(data_structure.entity_ids("node"))
+        length, apex = np.asarray(data_structure.get("length")), np.asarray(data_structure.get("is_apex")) > 0
         cut = ids[apex & (length > SEGMENT_LENGTH)]
         if cut.size == 0:
             return
-        props = {name: g.property(name) for name in ("length", "is_apex", "x2", "y2", "z2")}
+        props = {name: mtg.property(name) for name in ("length", "is_apex", "x2", "y2", "z2")}
         rest = {int(v): props["length"][v] - SEGMENT_LENGTH for v in cut}
         by_complex = {}
         for v in cut.tolist():
-            by_complex.setdefault(g.complex(v), []).append(v)
+            by_complex.setdefault(mtg.complex(v), []).append(v)
         for organ, apices in by_complex.items():
             x, y, z = ([props[name][v] for v in apices] for name in ("x2", "y2", "z2"))
-            g.add_components_bulk(organ, len(apices), topo_parents=apices,
-                                  **PropsConfig(scale=g.scales.SubOrgan, edge_type='<',
-                                                label=g.labels.SubOrgan.RootSegment),
+            mtg.add_components_bulk(organ, len(apices), topo_parents=apices,
+                                  **PropsConfig(scale=mtg.scales.SubOrgan, edge_type='<',
+                                                label=mtg.labels.SubOrgan.RootSegment),
                                   length=[rest[v] for v in apices], is_apex=1., x1=x, x2=x, y1=y, y2=y, z1=z,
                                   z2=[zi - rest[v] for zi, v in zip(z, apices)])
             for parent in apices:
@@ -122,8 +124,8 @@ class BenchCarbon(FunctionalComponent):
     struct_mass: float = _node("extensive", 1.)
     exudation: float = _node("extensive")
     consumption: float = _node("extensive")
-    soil_nitrate: float = input_variable(**DOC, by="BenchSoilNitrate", initialize=0., scale=scales.SubOrgan)
-    length: float = input_variable(**DOC, by="BenchGrowth", initialize=0., scale=scales.SubOrgan)
+    soil_nitrate: float = input_variable(**DOC, by="BenchSoilNitrate", default=0., scale=scales.SubOrgan)
+    length: float = input_variable(**DOC, by="BenchGrowth", default=0., scale=scales.SubOrgan)
     exudation_rate: float = parameter(**DOC, by="", default=1e-6)
     consumption_rate: float = parameter(**DOC, by="", default=1e-6)
 
@@ -145,8 +147,8 @@ class BenchPhloem(FunctionalComponent):
     """One graph system: implicit axial diffusion of sucrose, solved on the whole population at once (each plant a
     connected piece of the graph)."""
     sucrose: float = _node("intensive", 1.)
-    sucrose_flux: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, location="edge",
-                                         mapping="child", state_variable_type="extensive")
+    sucrose_flux: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, location="edge",
+                                         aggregation="child", kind="extensive")
     conductance: float = parameter(**DOC, by="", default=1e-5)
     time_step = DT
 
@@ -154,53 +156,44 @@ class BenchPhloem(FunctionalComponent):
     class _phloem:
         @node_balance(field="sucrose")
         def _balance(self, sucrose, sucrose_flux):
-            return (sucrose - self.previous("sucrose")) / self.dt \
-                + np.asarray(self._graph_view.incidence @ sucrose_flux).reshape(-1)
+            return (sucrose - self.previous("sucrose")) / self.step_duration \
+                + np.asarray(self.graph_view.incidence @ sucrose_flux).reshape(-1)
 
         @edge_law(field="sucrose_flux")
         def _law(self, sucrose, sucrose_flux, conductance):
-            return sucrose_flux - conductance * np.asarray(self._graph_view.incidence.T @ sucrose).reshape(-1)
+            return sucrose_flux - conductance * np.asarray(self.graph_view.incidence.T @ sucrose).reshape(-1)
 
 
-class BenchPlant:
+class BenchPlant(CompositeModel):
+    """The rates and states, the graph system, then the growth (each one's time: the Scene's timing)."""
     initiators = (BenchGrowth,)
-    timings = {}
-
-    def __init__(self, data_structure, time_step):
-        self.growth = BenchGrowth(data_structure=data_structure)
-        self.carbon = BenchCarbon(data_structure=data_structure)
-        self.phloem = BenchPhloem(data_structure=data_structure)
-        self.components = [self.growth, self.carbon, self.phloem]
-
-    def run(self):
-        for name, component in (("rates and states", self.carbon), ("graph system", self.phloem),
-                                ("growth", self.growth)):
-            start = time.perf_counter()
-            component()
-            BenchPlant.timings[name] = BenchPlant.timings.get(name, 0.) + time.perf_counter() - start
+    parts = {"growth": BenchGrowth, "carbon": BenchCarbon, "phloem": BenchPhloem}
+    schedule = ("carbon", "phloem", "growth")
+    phases = {"rates and states": "BenchPlant.BenchCarbon", "graph system": "BenchPlant.BenchPhloem",
+              "growth": "BenchPlant.BenchGrowth"}
 
 
 # ---------------------------------------------------------------- environment
 
 @dataclass
 class BenchSoilNitrate(FunctionalComponent):
-    exudation: float = input_variable(**DOC, by="BenchCarbon", initialize=0., location="cell",
-                                      state_variable_type="extensive")
-    soil_nitrate: float = state_variable(**DOC, initialize=1., location="cell", state_variable_type="intensive")
+    exudation: float = input_variable(**DOC, by="BenchCarbon", default=0., location="cell",
+                                      kind="extensive")
+    soil_nitrate: float = state_variable(**DOC, default=1., location="cell", kind="intensive")
 
     @rate
     def _soil_nitrate(self, soil_nitrate, exudation):
         return 0.99 * soil_nitrate + exudation
 
 
-class BenchSoil:
-    def __init__(self, populations, scene_xrange, scene_yrange, time_step):
-        self.grid = ArrayDataStructure(shape=(20, 20, 50), dx=(scene_xrange / 20, scene_yrange / 20, 0.02))
+class BenchSoil(EnvironmentModel):
+    compartment = "Soil"
+
+    def __init__(self, plant_data_structures, x_range, y_range, time_step):
+        super().__init__(plant_data_structures, x_range, y_range, time_step)
+        self.grid = ArrayDataStructure(shape=(20, 20, 50), spacing=(x_range / 20, y_range / 20, 0.02))
         self.nitrate = BenchSoilNitrate(data_structure=self.grid)
         self.components = [self.nitrate]
-
-    def run(self):
-        self.nitrate()
 
 
 TRANSLATOR = (Translator().link("BenchSoilNitrate", "exudation", "BenchCarbon", {"exudation": 1.})
@@ -211,24 +204,20 @@ TRANSLATOR = (Translator().link("BenchSoilNitrate", "exudation", "BenchCarbon", 
 
 def _planting(n_plants, side):
     per_row = int(np.ceil(np.sqrt(n_plants)))
-    rows = [dict(plant=f"p{i}", model=BenchPlant, x=(i % per_row + 0.5) * side / per_row,
-                 y=(i // per_row + 0.5) * side / per_row, z=0., rotation=0., scenario={"parameters": {}})
-            for i in range(n_plants)]
-    table = pd.DataFrame(rows)
-    table.attrs.update(xrange=side, yrange=side)
-    return table
+    plants = [Planting(x=(i % per_row + 0.5) * side / per_row, y=(i // per_row + 0.5) * side / per_row)
+              for i in range(n_plants)]
+    return planting(plants, BenchPlant, x_range=side, y_range=side)
 
 
 def bench_segments(n_plants, steps, method):
-    Choregrapher().reset()
-    BenchPlant.timings = {}
     start = time.perf_counter()
     with tempfile.TemporaryDirectory() as folder:
         scene = Scene(_planting(n_plants, side=1.), environment=[BenchSoil], translator=TRANSLATOR, time_step=DT,
-                      mapping_method=method, output_dirpath=folder, log_plants=["p0"], heavy_log_period=steps)
+                      mapping_method=method,
+                      recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period=steps))
         built = time.perf_counter() - start
-        ds = scene.populations[0].data_structure
-        n0 = ds.n_nodes()
+        data_structure = scene.populations[0].data_structure
+        n0 = data_structure.n_nodes()
         phases = {"exchanges": 0., "soil": 0., "recorder": 0.}
         exchanges, recorder = scene.exchanges.exchange, scene.recorder.record
 
@@ -244,13 +233,13 @@ def bench_segments(n_plants, steps, method):
         scene.environment[0].run = timed("soil", scene.environment[0].run)
         scene.run()                                    # warm-up (numba, caches)
         phases = dict.fromkeys(phases, 0.)
-        BenchPlant.timings = {}
+        scene.timing.clear()
         start = time.perf_counter()
         for _ in range(steps):
             scene.run()
         total = (time.perf_counter() - start) / steps
-    phases.update(BenchPlant.timings)
-    return dict(plants=n_plants, method=method, segments=n0, grown=ds.n_nodes() - n0, build_s=built,
+    phases.update({name: scene.timing.get(key, 0.) for name, key in BenchPlant.phases.items()})
+    return dict(plants=n_plants, method=method, segments=n0, grown=data_structure.n_nodes() - n0, build_s=built,
                 step_s=total, **{f"{k}_s": v / steps for k, v in phases.items()})
 
 
@@ -259,13 +248,12 @@ def bench_segments(n_plants, steps, method):
 def bench_anatomy(n_segments, steps):
     from anatomy import make_rooted_anatomy, wiring
     from openalea.metafspm.data_structure.data_api import MPGDataStructure
-    Choregrapher().reset()
-    Choregrapher().add_simulation_time_step(DT)
     start = time.perf_counter()
-    g, _, _ = make_rooted_anatomy(n_segments)
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan, nodes="Compartment", wiring=wiring(g))
+    mtg, _, _ = make_rooted_anatomy(n_segments)
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan, nodes="Compartment", wiring=wiring(mtg))
+    data_structure.simulation_time_step = DT
     built = time.perf_counter() - start
-    carbon, phloem = AnatomyCarbon(data_structure=ds), AnatomyPhloem(data_structure=ds)
+    carbon, phloem = AnatomyCarbon(data_structure=data_structure), AnatomyPhloem(data_structure=data_structure)
     carbon()
     phloem()
     timings = {"rates and states": 0., "graph system": 0.}
@@ -274,14 +262,14 @@ def bench_anatomy(n_segments, steps):
             t = time.perf_counter()
             component()
             timings[name] += time.perf_counter() - t
-    return dict(segments=n_segments, compartments=ds.n_nodes(), edges=ds.n_edges(), build_s=built,
+    return dict(segments=n_segments, compartments=data_structure.n_nodes(), edges=data_structure.n_edges(), build_s=built,
                 **{f"{k}_s": v / steps for k, v in timings.items()})
 
 
 @dataclass
 class AnatomyCarbon(FunctionalComponent):
-    hexose: float = state_variable(**DOC, initialize=1., scale=scales.Compartment, state_variable_type="intensive")
-    exudation: float = state_variable(**DOC, initialize=0., scale=scales.Compartment, state_variable_type="extensive")
+    hexose: float = state_variable(**DOC, default=1., scale=scales.Compartment, kind="intensive")
+    exudation: float = state_variable(**DOC, default=0., scale=scales.Compartment, kind="extensive")
     exudation_rate: float = parameter(**DOC, by="", default=1e-6)
 
     @rate
@@ -295,8 +283,8 @@ class AnatomyCarbon(FunctionalComponent):
 
 @dataclass
 class AnatomyPhloem(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=1., scale=scales.Compartment, state_variable_type="intensive")
-    solute_flux: float = state_variable(**DOC, initialize=0., scale=scales.Connection, state_variable_type="extensive")
+    solute: float = state_variable(**DOC, default=1., scale=scales.Compartment, kind="intensive")
+    solute_flux: float = state_variable(**DOC, default=0., scale=scales.Connection, kind="extensive")
     conductance: float = parameter(**DOC, by="", default=1e-5)
     time_step = DT
 
@@ -305,11 +293,11 @@ class AnatomyPhloem(FunctionalComponent):
         @node_balance(field="solute")
         def _balance(self, solute, solute_flux):
             return (solute - self.previous("solute")) / self.time_step \
-                + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1)
+                + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1)
 
         @edge_law(field="solute_flux")
         def _law(self, solute, solute_flux, conductance):
-            return solute_flux - conductance * np.asarray(self._graph_view.incidence.T @ solute).reshape(-1)
+            return solute_flux - conductance * np.asarray(self.graph_view.incidence.T @ solute).reshape(-1)
 
 
 # ---------------------------------------------------------------- main

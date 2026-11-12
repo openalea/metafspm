@@ -1,7 +1,7 @@
 """Tests for the numpy-backed MPGDataStructure.
 
 MPGDataStructure stores node and edge data as numpy arrays rather than
-g.property() dicts.  The incidence matrix is sparse (CSR) and cached.
+mtg.property() dicts.  The incidence matrix is sparse (CSR) and cached.
 
 Three concerns are tested:
   1. Property storage and retrieval (node_data / edge_data)
@@ -24,69 +24,69 @@ from openalea.metafspm.data_structure.data_api import MPGDataStructure
 # ── Fixture ───────────────────────────────────────────────────────────────────
 
 def _make_linear_mpg():
-    """Return (g, sc, v1, v2, v3) — 3-vertex SubOrgan chain, populated."""
-    g   = MPG()
-    sc  = g.scales.SubOrgan
-    anc = g.scales.anchors[sc]
-    v1 = g.add_system_root_at_scale(
-        sc, label=g.labels.SubOrgan.StemElement)
-    v2 = g.add_component_with_topo(
+    """Return (mtg, sc, v1, v2, v3) — 3-vertex SubOrgan chain, populated."""
+    mtg   = MPG()
+    sc  = mtg.scales.SubOrgan
+    anc = mtg.scales.anchors[sc]
+    v1 = mtg._add_system_root_at_scale(
+        sc, label=mtg.labels.SubOrgan.StemElement)
+    v2 = mtg.add_component_with_topo(
         anc, v1, **PropsConfig(scale=sc, edge_type='<',
-                               label=g.labels.SubOrgan.StemElement))
-    v3 = g.add_component_with_topo(
+                               label=mtg.labels.SubOrgan.StemElement))
+    v3 = mtg.add_component_with_topo(
         anc, v2, **PropsConfig(scale=sc, edge_type='<',
-                               label=g.labels.SubOrgan.StemElement))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return g, sc, v1, v2, v3
+                               label=mtg.labels.SubOrgan.StemElement))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return mtg, sc, v1, v2, v3
 
 
 # ── 1. Property storage ───────────────────────────────────────────────────────
 
 def test_set_get_node_property_roundtrip():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)   # 3 nodes (anchors are excluded)
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)   # 3 nodes (anchors are excluded)
     vals = np.array([1.0, 2.0, 3.0])
-    ds.register('potential', vals, location="node")
-    np.testing.assert_array_equal(ds.node_property('potential'), vals)
+    data_structure.register('potential', vals, location="node")
+    np.testing.assert_array_equal(data_structure._node_property('potential'), vals)
 
 
 def test_register_checks_node_length():
     """A node array must have one value per node (a 4-value array used to be accepted on 3 nodes)."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
     with pytest.raises(ValueError, match="potential"):
-        ds.register('potential', np.array([1.0, 2.0, 3.0, 0.0]), location="node")
+        data_structure.register('potential', np.array([1.0, 2.0, 3.0, 0.0]), location="node")
 
 
 def test_set_get_edge_property_roundtrip():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)   # 2 edges
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)   # 2 edges
     vals = np.array([5.0, 8.0])
-    ds.register('conductance', vals, location="edge")
-    np.testing.assert_array_equal(ds.edge_property('conductance'), vals)
+    data_structure.register('conductance', vals, location="edge")
+    np.testing.assert_array_equal(data_structure._edge_property('conductance'), vals)
 
 
 def test_node_property_missing_raises_key_error():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
     with pytest.raises(KeyError, match="potential"):
-        ds.node_property('potential')
+        data_structure._node_property('potential')
 
 
 def test_edge_property_missing_raises_key_error():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
     with pytest.raises(KeyError, match="conductance"):
-        ds.edge_property('conductance')
+        data_structure._edge_property('conductance')
 
 
 def test_available_vars_covers_node_and_edge():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    ds.register('potential', np.zeros(3), location="node")
-    ds.register('conductance', np.zeros(2), location="edge")
-    avail = ds.available_vars()
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    data_structure.register('potential', np.zeros(3), location="node")
+    data_structure.register('conductance', np.zeros(2), location="edge")
+    avail = data_structure.available_vars()
     assert 'potential'   in avail
     assert 'conductance' in avail
 
@@ -94,54 +94,54 @@ def test_available_vars_covers_node_and_edge():
 # ── 2. Sparse incidence matrix ────────────────────────────────────────────────
 
 def test_incidence_matrix_is_sparse():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    B  = ds.incidence_matrix()
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    B  = data_structure._incidence_matrix()
     assert issparse(B)
 
 
 def test_incidence_matrix_shape():
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    B  = ds.incidence_matrix()
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    B  = data_structure._incidence_matrix()
     assert B.shape == (3, 2)   # 3 nodes, 2 edges
 
 
 def test_incidence_matrix_column_sums_zero():
     """Columns of B must sum to zero (flow conservation)."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    B  = ds.incidence_matrix()
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    B  = data_structure._incidence_matrix()
     col_sums = np.asarray(B.sum(axis=0)).ravel()
     np.testing.assert_array_equal(col_sums, [0.0, 0.0])
 
 
 def test_incidence_matrix_is_cached():
     """Second call returns the same object — no recomputation."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    B1 = ds.incidence_matrix()
-    B2 = ds.incidence_matrix()
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    B1 = data_structure._incidence_matrix()
+    B2 = data_structure._incidence_matrix()
     assert B1 is B2
 
 
 def test_invalidate_topology_clears_cache():
     """invalidate_topology() forces a fresh incidence matrix on next call."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    B1 = ds.incidence_matrix()
-    ds.invalidate_topology()
-    B2 = ds.incidence_matrix()
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    B1 = data_structure._incidence_matrix()
+    data_structure._invalidate_topology()
+    B2 = data_structure._incidence_matrix()
     assert B1 is not B2
 
 
 def test_invalidate_topology_rebuilds_index_map():
     """After invalidate, n_nodes / n_edges stay consistent with the MTG."""
-    g, sc, v1, v2, v3 = _make_linear_mpg()
-    ds = MPGDataStructure(g)
-    assert ds.n_nodes() == 3
-    ds.invalidate_topology()
-    assert ds.n_nodes() == 3 # same — no structural change
+    mtg, sc, v1, v2, v3 = _make_linear_mpg()
+    data_structure = MPGDataStructure(mtg)
+    assert data_structure.n_nodes() == 3
+    data_structure._invalidate_topology()
+    assert data_structure.n_nodes() == 3 # same — no structural change
 
 
 # ── 3. Integration: wrap a populate_graph result ──────────────────────────────
@@ -155,15 +155,15 @@ def test_mpg_data_structure_wraps_suborgan_scale():
     canonical node identifiers.
     """
     from simple_seedling import generate_simple_mpg_seedling
-    g, seedling = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
+    mtg, seedling = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
 
-    ds = MPGDataStructure(g)
-    assert ds.n_nodes() == 14
-    assert ds.n_edges() == 13
+    data_structure = MPGDataStructure(mtg)
+    assert data_structure.n_nodes() == 14
+    assert data_structure.n_edges() == 13
 
-    B = ds.incidence_matrix()
+    B = data_structure._incidence_matrix()
     assert issparse(B)
     assert B.shape == (14, 13)
     col_sums = np.asarray(B.sum(axis=0)).ravel()
@@ -173,16 +173,16 @@ def test_mpg_data_structure_wraps_suborgan_scale():
 def test_extract_inject_state_with_suborgan_data():
     """extract_state / inject_state round-trip on a populated MPG."""
     from simple_seedling import generate_simple_mpg_seedling
-    g, seedling = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
+    mtg, seedling = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
 
-    ds   = MPGDataStructure(g)
-    n    = ds.n_nodes()
+    data_structure   = MPGDataStructure(mtg)
+    n    = data_structure.n_nodes()
     vals = np.arange(n, dtype=float)
-    ds.register('potential', vals, location="node")
+    data_structure.register('potential', vals, location="node")
 
-    x  = ds.extract_state(['potential'])
+    x  = data_structure.extract_state(['potential'])
     np.testing.assert_array_equal(x, vals)
-    ds.inject_state(x * 10.0, ['potential'])
-    np.testing.assert_array_equal(ds.node_property('potential'), vals * 10.0)
+    data_structure.inject_state(x * 10.0, ['potential'])
+    np.testing.assert_array_equal(data_structure._node_property('potential'), vals * 10.0)

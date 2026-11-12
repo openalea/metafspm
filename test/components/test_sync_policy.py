@@ -8,28 +8,29 @@ import numpy as np
 import pytest
 
 from openalea.metafspm.coupling.component import FunctionalComponent, parameter, state_variable
+from openalea.metafspm.data_structure.columns import DataStructureColumn
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
 from openalea.metafspm.solve.decorator import graph_system, node_balance, rate
 from simple_seedling import generate_simple_mpg_seedling
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 
 
 
 @pytest.fixture
 def seedling():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return g, MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return mtg, MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 @dataclass
 class Scaled(FunctionalComponent):
     k: float = parameter(**DOC, by="", default=1., scale=scales.SubOrgan)
-    level: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    level: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _level(self, k):
@@ -38,7 +39,7 @@ class Scaled(FunctionalComponent):
 
 @dataclass
 class Silent(FunctionalComponent):
-    quiet: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    quiet: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     mtg_sync = "never"
 
     @rate
@@ -47,26 +48,26 @@ class Silent(FunctionalComponent):
 
 
 def test_parameters_changed_on_the_mtg_are_seen_at_the_next_call(seedling):
-    g, ds = seedling
-    g.properties()["k"] = {int(v): 1. for v in ds.entity_ids("node")}
-    model = Scaled(data_structure=ds)
+    mtg, data_structure = seedling
+    mtg.properties()["k"] = {int(v): 1. for v in data_structure.entity_ids("node")}
+    model = Scaled(data_structure=data_structure)
     model()
-    np.testing.assert_array_equal(ds.get("level"), 2.)
-    g.properties()["k"] = {int(v): 3. for v in ds.entity_ids("node")}   # e.g. set by a growth model
+    np.testing.assert_array_equal(data_structure.get("level"), 2.)
+    mtg.properties()["k"] = {int(v): 3. for v in data_structure.entity_ids("node")}   # e.g. set by a growth model
     model()
-    np.testing.assert_array_equal(ds.get("level"), 6.)
+    np.testing.assert_array_equal(data_structure.get("level"), 6.)
 
 
 def test_a_never_synchronised_component_leaves_the_mtg_untouched(seedling):
-    g, ds = seedling
-    Silent(data_structure=ds)()
-    np.testing.assert_array_equal(ds.get("quiet"), 1.)
-    assert "quiet" not in g.properties() or not dict(g.property("quiet"))
+    mtg, data_structure = seedling
+    Silent(data_structure=data_structure)()
+    np.testing.assert_array_equal(data_structure.get("quiet"), 1.)
+    assert "quiet" not in mtg.properties() or not dict(mtg.property("quiet"))
 
 
 def test_the_sync_policy_is_checked(seedling):
-    _, ds = seedling
-    model = Silent(data_structure=ds)
+    _, data_structure = seedling
+    model = Silent(data_structure=data_structure)
     model.mtg_sync = "sometimes"
     with pytest.raises(ValueError, match="mtg_sync must be 'lazy', 'after_call' or 'never'"):
         model()
@@ -74,7 +75,7 @@ def test_the_sync_policy_is_checked(seedling):
 
 @dataclass
 class Overwriting(FunctionalComponent):
-    c: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    c: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     k: float = parameter(**DOC, by="", default=1., scale=scales.SubOrgan)
 
     @graph_system(node_unknowns=["c"], solver="newton")
@@ -86,18 +87,18 @@ class Overwriting(FunctionalComponent):
 
 
 def test_equations_cannot_write_into_their_parameters(seedling):
-    _, ds = seedling
-    model = Overwriting(data_structure=ds)
+    _, data_structure = seedling
+    model = Overwriting(data_structure=data_structure)
     with pytest.raises(ValueError, match="read-only"):
         model()
-    np.testing.assert_array_equal(ds.get("k"), 1.)      # the DataStructure is intact
+    np.testing.assert_array_equal(data_structure.get("k"), 1.)      # the DataStructure is intact
 
 
 # ---------------------------------------------------------------- lazy synchronisation
 
 @dataclass
 class Counter(FunctionalComponent):
-    count: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    count: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
 
     @rate
     def _count(self, count):
@@ -109,38 +110,37 @@ class EagerCounter(Counter):
     mtg_sync = "after_call"
 
 
-def _mtg_values(g, ds, name):
-    prop = g.property(name)
-    return np.array([prop.get(int(v), np.nan) for v in ds.entity_ids("node")])
+def _mtg_values(mtg, data_structure, name):
+    prop = mtg.property(name)
+    return np.array([prop.get(int(v), np.nan) for v in data_structure.entity_ids("node")])
 
 
-def test_lazy_states_reach_the_mtg_when_it_is_read(seedling):
-    g, ds = seedling
-    model = Counter(data_structure=ds)
+def test_lazy_states_are_read_by_the_mtg_from_their_column(seedling):
+    mtg, data_structure = seedling
+    model = Counter(data_structure=data_structure)
     model()
     model()
-    assert np.isnan(_mtg_values(g, ds, "count")).all()                                              # not yet
-    np.testing.assert_array_equal(_mtg_values(ds.mtg, ds, "count"), 2.)                               # on read
+    assert isinstance(mtg.properties()["count"], DataStructureColumn)          # one storage: no copy to write
+    np.testing.assert_array_equal(_mtg_values(mtg, data_structure, "count"), 2.)          # the current values, without a flush
     model()
-    ds.flush_mtg()
-    np.testing.assert_array_equal(_mtg_values(g, ds, "count"), 3.)
+    np.testing.assert_array_equal(_mtg_values(data_structure.mtg, data_structure, "count"), 3.)
 
 
 def test_only_changed_variables_are_written(seedling, monkeypatch):
-    g, ds = seedling
-    Counter(data_structure=ds)()
+    mtg, data_structure = seedling
+    Counter(data_structure=data_structure)()
     written = []
-    original = ds.write_mtg
-    monkeypatch.setattr(ds, "write_mtg", lambda spec: (written.append(spec.name), original(spec)))
-    ds.flush_mtg()
-    ds.flush_mtg()                    # nothing changed since
+    original = data_structure._write_mtg
+    monkeypatch.setattr(data_structure, "_write_mtg", lambda spec: (written.append(spec.name), original(spec)))
+    data_structure.flush_mtg()
+    data_structure.flush_mtg()                    # nothing changed since
     assert written == ["count"]
-    ds.set("count", 5.)
-    ds.mtg
+    data_structure.set("count", 5.)
+    data_structure.mtg
     assert written == ["count", "count"]
 
 
 def test_after_call_writes_after_every_call(seedling):
-    g, ds = seedling
-    EagerCounter(data_structure=ds)()
-    np.testing.assert_array_equal(_mtg_values(g, ds, "count"), 1.)
+    mtg, data_structure = seedling
+    EagerCounter(data_structure=data_structure)()
+    np.testing.assert_array_equal(_mtg_values(mtg, data_structure, "count"), 1.)

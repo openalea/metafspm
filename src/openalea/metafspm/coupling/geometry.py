@@ -5,35 +5,62 @@ A StructuralComponent may provide ``triangles(where=None) -> Triangles``: every 
 scene's frame, and the node index (in its DataStructure) of the element each belongs to. A light model gathers them
 (one population's, or a UnionDataStructure's, the populations' node indices offset), runs on them, and gives its
 results back per element (np.bincount on the owners). An environment model, given DataStructures, calls
-``ds.triangles()``: each StructuralComponent registers itself on its DataStructure as their provider. No PlantGL in the path: a PlantGL scene, for display, can be
+``data_structure.triangles()``: each StructuralComponent registers itself on its DataStructure as their provider. No PlantGL in the path: a PlantGL scene, for display, can be
 built from the same arrays. Segment models (roots, stems drawn as segments x1…z2 with a radius) get a default:
 segment_triangles.
 
     triangles = component.triangles()
     triangles.vertices       (T, 3, 3): T triangles, their 3 points, x y z
     triangles.owner          (T,): the node index of each triangle's element
+    triangles.owner_ids      (T,) or None: for display shapes only, each triangle's owner by id, for those owned
+                             by no node (owner -1): a reduced section's interior cells, by their display ids
+                             (solve.reduction.display_ids), which an encoding3d frame writes as rows of their own
+    triangles.attributes     {name: (T,)}: per-triangle values a provider gives (Adel's "green": each triangle's
+                             green share), kept through select, clip and concatenate (ATTRIBUTE_DEFAULTS)
+
+A component drawing shapes for display only (``display_triangles(where=None) -> Triangles``, e.g. GRANAP's sections,
+in the scene's frame) may also draw the groups of a Reduction as instances of their templates (an encoding3d frame's
+"instances" display, io.encoding3d): ``display_instances(owners) -> TemplateShapes``, each group's shape once per
+template in the template's own coordinates, each triangle owned by the template row it shows, and a 4×4 per group
+placing it. Any reduction, at any location: a section's cells, a coarse cell's sub-cells, a reduced network's nodes.
+
+What of the elements lies in a domain (a HalfSpace; "air" and "soil", the half spaces of the scene's soil surface,
+Scene(soil_surface=)), vectorised: Triangles.clip and Triangles.fraction_in (exact cuts at the plane), and per entity
+a DataStructure's geometry (data_structure.geometry: Geometry.clipped, fraction_in, centre_in, by area or by length);
+FractionIn and CentreIn give them to translator links as geometric variables (DataStructure.derive_geometry).
 
 The turtle's frame operations follow PlantGL's PglTurtle (the same angles in degrees, the same senses), for models
 placing their elements as PlantGL would, without it: a frame is its heading H and its up U, its left L = U × H.
 follow_parents places elements that each start from their parent's end (roots, segments), with PlantGL's tropism.
+They are numba kernels, in openalea.metafspm.kernels (left_of, roll_right, down, turn_left, roll_to_vertical,
+follow_parents).
 """
 from dataclasses import dataclass
-from math import cos, radians, sin, sqrt
 
 import numpy as np
-from numba import njit
 
 
 @dataclass
 class Triangles:
     vertices: np.ndarray
     owner: np.ndarray
+    owner_ids: np.ndarray = None
+    attributes: dict = None
 
     def __post_init__(self):
         self.vertices = np.asarray(self.vertices, dtype=float).reshape(-1, 3, 3)
         self.owner = np.asarray(self.owner, dtype=np.int64).reshape(-1)
         if self.owner.size != self.vertices.shape[0]:
             raise ValueError(f"Triangles: {self.vertices.shape[0]} triangles, {self.owner.size} owners")
+        if self.owner_ids is not None:
+            self.owner_ids = np.asarray(self.owner_ids, dtype=np.int64).reshape(-1)
+            if self.owner_ids.size != self.owner.size:
+                raise ValueError(f"Triangles: {self.owner.size} owners, {self.owner_ids.size} owner ids")
+        attributes = {}
+        for name, values in (self.attributes or {}).items():
+            values = np.broadcast_to(np.asarray(values, dtype=float), self.owner.shape).copy()
+            attributes[name] = values
+        self.attributes = attributes
 
     def __len__(self):
         return self.owner.size
@@ -44,18 +71,33 @@ class Triangles:
 
     @classmethod
     def concatenate(cls, parts, offsets=None):
-        """The triangles of several parts, their owners offset by *offsets* (e.g. a union's part offsets)."""
+        """The triangles of several parts, their owners offset by *offsets* (e.g. a union's part offsets); an
+        attribute a part does not carry takes its default there (ATTRIBUTE_DEFAULTS: "green" 1, wholly green; NaN
+        for the others)."""
         parts = list(parts)
         if not parts:
             return cls.empty()
         offsets = np.zeros(len(parts), dtype=np.int64) if offsets is None else np.asarray(offsets, dtype=np.int64)
+        owner_ids = None
+        if any(p.owner_ids is not None for p in parts):          # display shapes: their owners by id where given
+            owner_ids = np.concatenate([p.owner_ids if p.owner_ids is not None else np.full(len(p), -1)
+                                        for p in parts])
+        names = list(dict.fromkeys(name for p in parts for name in p.attributes))
+        attributes = {name: np.concatenate([p.attributes[name] if name in p.attributes
+                                            else np.full(len(p), ATTRIBUTE_DEFAULTS.get(name, np.nan))
+                                            for p in parts]) for name in names}
         return cls(np.concatenate([p.vertices for p in parts]),
-                   np.concatenate([p.owner + offset for p, offset in zip(parts, offsets)]))
+                   np.concatenate([np.where(p.owner >= 0, p.owner + offset, -1) for p, offset in zip(parts, offsets)]),
+                   owner_ids, attributes)
 
     def areas(self) -> np.ndarray:
         """Each triangle's area."""
         a, b, c = self.vertices[:, 0], self.vertices[:, 1], self.vertices[:, 2]
         return 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+
+    def centroids(self) -> np.ndarray:
+        """(T, 3): each triangle's centroid."""
+        return self.vertices.mean(axis=1)
 
     def per_owner(self, values, n_owners, weights=None) -> np.ndarray:
         """Per-triangle *values* summed per owner (weighted by *weights*, e.g. the triangles' areas)."""
@@ -70,28 +112,365 @@ class Triangles:
         summed = self.per_owner(values, n_owners, weights=weights)
         return np.divide(summed, total, out=np.zeros(n_owners), where=total > 0)
 
-    def clip_below(self, level=0.) -> "Triangles":
-        """The parts of the triangles above height *level* (the soil): a triangle across it cut at its plane (one
-        triangle or two, the same owner), one below it left out."""
-        vertices = self.vertices
-        below = vertices[:, :, 2] < level
-        count = below.sum(axis=1)
-        kept_vertices, kept_owners = [vertices[count == 0]], [self.owner[count == 0]]
-        for t in np.flatnonzero((count == 1) | (count == 2)):
-            points, buried = vertices[t], below[t]
-            polygon = []
-            for i in range(3):  # Sutherland–Hodgman against z >= level
-                current, following = points[i], points[(i + 1) % 3]
-                if not buried[i]:
-                    polygon.append(current)
-                if buried[i] != buried[(i + 1) % 3]:
-                    crossing = current + (level - current[2]) / (following[2] - current[2]) * (following - current)
-                    crossing[2] = level
-                    polygon.append(crossing)
-            for k in range(1, len(polygon) - 1):
-                kept_vertices.append(np.array([[polygon[0], polygon[k], polygon[k + 1]]]))
-                kept_owners.append(self.owner[t:t + 1])
-        return Triangles(np.concatenate(kept_vertices), np.concatenate(kept_owners))
+    def select(self, kept) -> "Triangles":
+        """The triangles of boolean or index array *kept*, with their owner ids and attributes."""
+        return Triangles(self.vertices[kept], self.owner[kept],
+                         None if self.owner_ids is None else self.owner_ids[kept],
+                         {name: values[kept] for name, values in self.attributes.items()})
+
+    def fraction_in(self, domain) -> np.ndarray:
+        """(T,): the fraction of each triangle's area inside *domain* (a HalfSpace), exact (its cut by the plane)."""
+        distance = domain.distance(self.vertices)                              # (T, 3), >= 0 inside
+        outside = distance < 0
+        count = outside.sum(axis=1)
+        fraction = np.where(count == 0, 1., 0.)
+        for odd_count, inside_area in ((1, False), (2, True)):
+            rows = np.flatnonzero(count == odd_count)
+            if not rows.size:
+                continue
+            # the vertex on its own side first (the outside one of one out, the inside one of two out)
+            first = np.argmax(outside[rows] if odd_count == 1 else ~outside[rows], axis=1)
+            d = distance[rows]
+            d0 = d[np.arange(rows.size), first]
+            d1 = d[np.arange(rows.size), (first + 1) % 3]
+            d2 = d[np.arange(rows.size), (first + 2) % 3]
+            corner = (d0 / (d0 - d1)) * (d0 / (d0 - d2))                     # the first vertex's corner triangle
+            fraction[rows] = corner if inside_area else 1. - corner
+        return fraction
+
+    def clip(self, domain) -> "Triangles":
+        """
+        The parts of the triangles inside *domain* (a HalfSpace, e.g. HalfSpace(0.): above the soil at height 0),
+        vectorised: a triangle across its plane cut there (one triangle or two, the same owner, owner id and
+        attributes, in the triangles' order), one outside left out, one on the plane kept.
+        """
+        distance = domain.distance(self.vertices)
+        outside = distance < 0
+        count = outside.sum(axis=1)
+        pieces, sources = [self.vertices[count == 0]], [np.flatnonzero(count == 0)]
+        for odd_count in (1, 2):
+            rows = np.flatnonzero(count == odd_count)
+            if not rows.size:
+                continue
+            first = np.argmax(outside[rows] if odd_count == 1 else ~outside[rows], axis=1)
+            order = (first[:, None] + np.arange(3)[None, :]) % 3                # the odd vertex first, orientation kept
+            points = np.take_along_axis(self.vertices[rows], order[:, :, None], axis=1)
+            d = np.take_along_axis(distance[rows], order, axis=1)
+            a, b, c = points[:, 0], points[:, 1], points[:, 2]
+            on_ab = a + (d[:, 0] / (d[:, 0] - d[:, 1]))[:, None] * (b - a)
+            on_ca = a + (d[:, 0] / (d[:, 0] - d[:, 2]))[:, None] * (c - a)
+            on_ab, on_ca = domain.onto(on_ab), domain.onto(on_ca)
+            if odd_count == 1:      # a out: the quadrilateral (ab, b, c, ca), two triangles
+                pieces += [np.stack([on_ab, b, c], axis=1), np.stack([on_ab, c, on_ca], axis=1)]
+                sources += [rows, rows]
+            else:                   # a in: the triangle (a, ab, ca)
+                pieces.append(np.stack([a, on_ab, on_ca], axis=1))
+                sources.append(rows)
+        source = np.concatenate(sources)
+        order = np.argsort(source, kind="stable")
+        source = source[order]
+        clipped = self.select(source)
+        clipped.vertices = np.concatenate(pieces)[order]
+        return clipped
+
+
+# The defaults of per-triangle attributes in the parts that do not carry them (Triangles.concatenate)
+ATTRIBUTE_DEFAULTS = {"green": 1.}
+
+
+@dataclass
+class TemplateShapes:
+    """
+    Groups drawn as instances of their templates (a component's display_instances(owners)): each shape once, in its
+    template's own coordinates, and per group the shape it draws and where.
+
+      owners      (N,) the groups drawn: their vertices (at the Reduction's location, e.g. SubOrgans, voxels)
+      shapes      {shape key: Triangles}: each shape in template coordinates, each triangle's owner the row it shows
+                  in the group's full template (SectionTemplate rows: a node of the reduced system, a Compartment,
+                  e.g. a cell's protoplast; owner_ids unused); a key is any hashable, stable from one frame to the
+                  next (e.g. the full template's key), the shape the same for every group of that key
+      shape_of    (N,) each group's shape key
+      transforms  (N, 4, 4): each group's placement, template coordinates → the DataStructure's (x' = T · [x, 1]):
+                  any affine map (a section's centre and its frame: translation, rotation, scaling along it)
+
+    placed(): the groups' triangles in the DataStructure's coordinates, as display_triangles draws them (their owner
+    the group's position in owners, owner_ids the template rows).
+    """
+    owners: np.ndarray
+    shapes: dict
+    shape_of: list
+    transforms: np.ndarray
+
+    def __post_init__(self):
+        self.owners = np.asarray(self.owners, dtype=np.int64).reshape(-1)
+        self.shape_of = list(self.shape_of)
+        self.transforms = np.asarray(self.transforms, dtype=float).reshape(-1, 4, 4)
+        if not (len(self.shape_of) == self.owners.size == self.transforms.shape[0]):
+            raise ValueError(f"TemplateShapes: {self.owners.size} owners, {len(self.shape_of)} shape keys, "
+                             f"{self.transforms.shape[0]} transforms")
+        missing = {key for key in self.shape_of} - set(self.shapes)
+        if missing:
+            raise ValueError(f"TemplateShapes: no shape for the keys {sorted(map(repr, missing))[:5]}")
+
+    def __len__(self):
+        return self.owners.size
+
+    def placed(self) -> Triangles:
+        """Every group's shape placed by its transform (owner: the group's position in owners; owner_ids: the
+        template rows)."""
+        parts = []
+        for position, (key, transform) in enumerate(zip(self.shape_of, self.transforms)):
+            shape = self.shapes[key]
+            points = shape.vertices.reshape(-1, 3) @ transform[:3, :3].T + transform[:3, 3]
+            parts.append(Triangles(points.reshape(-1, 3, 3), np.full(len(shape), position), shape.owner))
+        return Triangles.concatenate(parts) if parts else Triangles.empty()
+
+
+@dataclass(frozen=True)
+class HalfSpace:
+    """
+    The points on one side of a horizontal (or axis-normal) plane: *axis*'s coordinate >= *level* (*above*) or <=
+    *level*. A domain of Triangles.clip, Triangles.fraction_in and the DataStructures' geometry (data_structure.geometry).
+    The strings "air" and "soil" are the half spaces above and below the scene's soil surface (Scene(soil_surface=)).
+    """
+    level: float = 0.
+    axis: str = "z"
+    above: bool = True
+
+    @property
+    def _index(self) -> int:
+        return "xyz".index(self.axis)
+
+    def distance(self, points) -> np.ndarray:
+        """The signed distance of *points* (..., 3) to the plane, positive inside."""
+        offset = np.asarray(points, dtype=float)[..., self._index] - float(self.level)
+        return offset if self.above else -offset
+
+    def onto(self, points) -> np.ndarray:
+        """*points* on the plane (their axis coordinate set to the level exactly)."""
+        points = np.array(points, dtype=float)
+        points[..., self._index] = float(self.level)
+        return points
+
+    @property
+    def name(self) -> str:
+        return f"{'above' if self.above else 'below'}_{self.axis}_{self.level:g}"
+
+
+def domain_of(domain, soil_surface: float = 0.) -> HalfSpace:
+    """The HalfSpace of *domain*: "air" (above *soil_surface*), "soil" (below it) or a HalfSpace."""
+    if isinstance(domain, HalfSpace):
+        return domain
+    if domain == "air":
+        return HalfSpace(float(soil_surface), "z", True)
+    if domain == "soil":
+        return HalfSpace(float(soil_surface), "z", False)
+    raise ValueError(f"a geometric domain is 'air', 'soil' or a HalfSpace, got {domain!r}")
+
+
+def segment_fraction_in(start, end, domain) -> tuple:
+    """(fraction, centre): for segments from *start* to *end* ((n, 3) each), the fraction of each one's length inside
+    *domain* (a HalfSpace; a segment of no length: 1 inside, 0 outside) and the middle of its inside part (NaN for none
+    inside)."""
+    start, end = np.asarray(start, dtype=float), np.asarray(end, dtype=float)
+    d1, d2 = domain.distance(start), domain.distance(end)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        crossing = d1 / (d1 - d2)                                     # the plane's position along the segment
+    inside_start = d1 >= 0
+    inside_end = d2 >= 0
+    low = np.where(inside_start, 0., np.where(inside_end, crossing, 0.))
+    high = np.where(inside_end, 1., np.where(inside_start, crossing, 0.))
+    none = ~inside_start & ~inside_end
+    fraction = np.where(none, 0., high - low)
+    middle = 0.5 * (low + high)
+    centre = start + middle[:, None] * (end - start)
+    centre[none] = np.nan
+    return fraction, centre
+
+
+class Geometry:
+    """
+    The geometry of a DataStructure's elements (data_structure.geometry), vectorised: their triangles (its geometry providers')
+    or their segments (x1 … z2), and what of them lies in a domain ("air", "soil": the scene's soil surface; a
+    HalfSpace)::
+
+        data_structure.geometry.clipped("air", where="planted")                       the triangles above the soil (a light model's)
+        data_structure.geometry.fraction_in("air", location="SubOrgan", by="area", weight="green")
+                                                                          each element's green area fraction above it
+        data_structure.geometry.centre_in("air", by="length")                         the middle of each segment's part above it
+
+    by "area": the triangles' areas (weighted by a per-triangle attribute, *weight*: Adel's "green", the green share
+    of each triangle); by "length": the segments' lengths (their ends' variables x1, y1, z1, x2, y2, z2). *location*:
+    the entities the values are per (default the DataStructure's nodes; an anatomy-mode plant's scale, its SubOrgans:
+    the triangles of the view at that scale; a coarse location: summed over each entity's nodes). An entity with no
+    triangle (or no weight) gets *empty* (default NaN).
+    """
+    COORDINATES = ("x1", "y1", "z1", "x2", "y2", "z2")
+
+    def __init__(self, data_structure):
+        self.data_structure = data_structure
+
+    def domain(self, domain) -> HalfSpace:
+        return domain_of(domain, self.data_structure.soil_surface)
+
+    def _holder(self, location):
+        """(the DataStructure drawing the entities of *location*, the owner map from its nodes to them or None)."""
+        data_structure = self.data_structure
+        if location in (None, "node") or location == data_structure.__dict__.get("_at"):
+            return data_structure, None
+        if getattr(data_structure, "_anatomy", False) and hasattr(data_structure, "at"):
+            return data_structure.at(location), None
+        return data_structure, np.asarray(data_structure.owner(location), dtype=np.int64)
+
+    def _size(self, location) -> int:
+        data_structure = self.data_structure
+        if location in (None, "node") or location == data_structure.__dict__.get("_at"):
+            return int(data_structure.n_nodes())
+        return int(len(data_structure.entity_ids(location)))
+
+    def triangles(self, where=None, location=None):
+        """The elements' triangles (data_structure.triangles), owned by the entities of *location*."""
+        holder, owner = self._holder(location)
+        triangles = holder.triangles(where)
+        if owner is not None:
+            triangles.owner = np.where(triangles.owner >= 0, owner[np.maximum(triangles.owner, 0)], -1)
+        return triangles
+
+    def clipped(self, domain, where=None, location=None):
+        """The triangles' parts inside *domain* (Triangles.clip)."""
+        return self.triangles(where, location).clip(self.domain(domain))
+
+    def _segments(self, location):
+        data_structure = self.data_structure
+        missing = [name for name in self.COORDINATES if not data_structure.has(name)]
+        if missing:
+            raise ValueError(f"{type(data_structure).__name__}.geometry by length: no segment ends {missing}")
+        stored = data_structure.location("x1")
+        if location not in (None, "node", stored) and location != data_structure.__dict__.get("_at"):
+            raise ValueError(f"geometry by length: the segment ends are at {stored}, not at {location}")
+        x1, y1, z1, x2, y2, z2 = (np.asarray(data_structure.get(name), dtype=float).reshape(-1) for name in self.COORDINATES)
+        return np.stack([x1, y1, z1], axis=1), np.stack([x2, y2, z2], axis=1)
+
+    def fraction_in(self, domain, location=None, by: str = "area", weight: str = None, where=None,
+                    empty: float = None) -> np.ndarray:
+        """Per entity of *location*, the fraction of its area (by "area", weighted by the triangles' attribute
+        *weight*) or of its length (by "length") inside *domain*; *empty* (default NaN) without any."""
+        domain = self.domain(domain)
+        empty = np.nan if empty is None else float(empty)
+        if by == "length":
+            if weight is not None:
+                raise ValueError("geometry by length: weight= is a per-triangle attribute (by='area')")
+            fraction, _ = segment_fraction_in(*self._segments(location), domain)
+            if where is not None:
+                fraction = np.where(np.asarray(where, dtype=bool), fraction, empty)
+            return fraction
+        triangles, size = self._area_triangles(where, location, by)
+        weights = triangles.areas() * self._weights(triangles, weight)
+        total = triangles.per_owner(weights, size)
+        inside = triangles.per_owner(weights * triangles.fraction_in(domain), size)
+        return np.divide(inside, total, out=np.full(size, empty), where=total > 0)
+
+    def centre_in(self, domain, location=None, by: str = "area", weight: str = None, where=None) -> np.ndarray:
+        """(n, 3) per entity of *location*: the centre of its part inside *domain* (the area-weighted centroid of its
+        triangles' parts there, weighted by *weight*; by "length", the middle of its segment's part); NaN without
+        any."""
+        domain = self.domain(domain)
+        if by == "length":
+            if weight is not None:
+                raise ValueError("geometry by length: weight= is a per-triangle attribute (by='area')")
+            _, centre = segment_fraction_in(*self._segments(location), domain)
+            if where is not None:
+                centre[~np.asarray(where, dtype=bool)] = np.nan
+            return centre
+        triangles, size = self._area_triangles(where, location, by)
+        clipped = triangles.clip(domain)
+        weights = clipped.areas() * self._weights(clipped, weight)
+        total = clipped.per_owner(weights, size)
+        centroids = clipped.centroids()
+        return np.stack([np.divide(clipped.per_owner(centroids[:, axis] * weights, size), total,
+                                   out=np.full(size, np.nan), where=total > 0) for axis in range(3)], axis=1)
+
+    def _area_triangles(self, where, location, by):
+        if by != "area":
+            raise ValueError(f"geometry: by is 'area' or 'length', got {by!r}")
+        triangles = self.triangles(where, location)
+        kept = triangles.owner >= 0
+        return (triangles if kept.all() else triangles.select(kept)), self._size(location)
+
+    @staticmethod
+    def _weights(triangles, weight):
+        if weight is None or not len(triangles):
+            return 1.
+        if weight not in triangles.attributes:
+            raise KeyError(f"geometry: the triangles carry no attribute '{weight}' (they carry "
+                           f"{sorted(triangles.attributes)}): their geometry provider gives it")
+        return triangles.attributes[weight]
+
+    def stamp(self, location=None, by: str = "area") -> tuple:
+        """What the geometry is made from: the topology, and the geometry providers' stamps
+        (StructuralComponent.geometry_stamp) or, by length, the segment ends' writes."""
+        data_structure = self.data_structure
+        if by == "length":
+            return (data_structure.topology_version, tuple(data_structure.write_count(name) for name in self.COORDINATES if data_structure.has(name)))
+        holder, _ = self._holder(location)
+        providers = holder.__dict__.get("_geometry_providers", [])
+        stamps = []
+        for provider in providers:
+            drawn = getattr(provider, "_drawn_by", provider)
+            stamps.append(drawn.geometry_stamp() if hasattr(drawn, "geometry_stamp") else None)
+        return (data_structure.topology_version, tuple(stamps))
+
+
+@dataclass(frozen=True)
+class FractionIn:
+    """
+    A link source (a translator formula's or factor's, coupling.translator.Link): per entity, the fraction of its
+    geometry inside *domain* (Geometry.fraction_in: by "area" weighted by the triangles' attribute *weight*, or by
+    "length"), a geometric variable the DataStructure derives and keeps up to date (DataStructure.derive_geometry)::
+
+        .link("GasExchange", "green_area", "ShootArchitecture",
+              ("green_area", FractionIn("air", weight="green", empty=0.)), formula=np.multiply,
+              names={"green_area": "exchanging_area"})
+    """
+    domain: object = "air"
+    by: str = "area"
+    weight: str = None
+    empty: float = None
+
+    @property
+    def name(self) -> str:
+        domain = self.domain if isinstance(self.domain, str) else self.domain.name
+        return "_".join(["fraction_in", domain, "by", self.by] + ([self.weight] if self.weight else []))
+
+    unit, kind = "adim", "intensive"
+
+    def evaluate(self, data_structure, location) -> np.ndarray:
+        return data_structure.geometry.fraction_in(self.domain, location=location, by=self.by, weight=self.weight,
+                                                   empty=self.empty)
+
+
+@dataclass(frozen=True)
+class CentreIn:
+    """A link source: per entity, the *axis* coordinate of the centre of its part inside *domain*
+    (Geometry.centre_in); NaN without any (e.g. an element's height above the soil, NaN wholly below it)."""
+    domain: object = "air"
+    axis: str = "z"
+    by: str = "area"
+    weight: str = None
+
+    @property
+    def name(self) -> str:
+        domain = self.domain if isinstance(self.domain, str) else self.domain.name
+        return "_".join(["centre_in", domain, self.axis, "by", self.by] + ([self.weight] if self.weight else []))
+
+    unit, kind = "m", "intensive"         # the scene's length unit
+
+    def evaluate(self, data_structure, location) -> np.ndarray:
+        centre = data_structure.geometry.centre_in(self.domain, location=location, by=self.by, weight=self.weight)
+        return centre[:, "xyz".index(self.axis)]
+
+
+GEOMETRIC_SOURCES = (FractionIn, CentreIn)
 
 
 # The slim cylinder (Adel's mtg_interpreter.slim_cylinder): 3 points at its base, 3 at its top turned by π, 8 triangles
@@ -140,99 +519,34 @@ def segment_triangles(start, end, radius) -> tuple:
     return place(local, start, heading, up), drawn
 
 
-# --- The turtle's frame operations (PlantGL's PglTurtle), on heading and up arrays (3,) changed in place ---
-
-@njit(cache=True)
-def _cross(a, b):
-    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
+SEGMENT_ENDS = ("x1", "y1", "z1", "x2", "y2", "z2")
 
 
-@njit(cache=True)
-def _rotate(vector, axis, angle):
-    """*vector* rotated by *angle* (radians) about the unit *axis* (Rodrigues, right-handed)."""
-    c, s = cos(angle), sin(angle)
-    along = (axis[0] * vector[0] + axis[1] * vector[1] + axis[2] * vector[2]) * (1. - c)
-    across = _cross(axis, vector)
-    return vector * c + across * s + axis * along
+def drawn_ends(data_structure, nodes=None) -> tuple:
+    """(start, end), each (n, 3): where the elements of *data_structure* (its nodes; *nodes*: some of their indices)
+    are drawn: their display ends (display_x1 ... display_z2, data_structure.mpg.DISPLAY_ENDS) where given (finite),
+    else their topological ends (x1 ... z2)."""
+    from openalea.metafspm.data_structure.mpg import DISPLAY_ENDS
+    ends = np.stack([np.asarray(data_structure.get(name), dtype=float).reshape(-1) for name in SEGMENT_ENDS], axis=1)
+    if nodes is not None:
+        ends = ends[nodes]
+    if all(data_structure.has(name) for name in DISPLAY_ENDS):
+        display = np.stack([np.asarray(data_structure.get(name), dtype=float).reshape(-1) for name in DISPLAY_ENDS], axis=1)
+        if nodes is not None:
+            display = display[nodes]
+        given = np.isfinite(display).all(axis=1)
+        ends[given] = display[given]
+    return ends[:, :3], ends[:, 3:]
 
 
-@njit(cache=True)
-def left_of(heading, up):
-    """The frame's left: U × H."""
-    return _cross(up, heading)
-
-
-@njit(cache=True)
-def roll_right(heading, up, angle):
-    """PglTurtle.rollR(angle): the frame turned about its heading, its up towards its left."""
-    up[:] = _rotate(up, heading, -radians(angle))
-
-
-@njit(cache=True)
-def down(heading, up, angle):
-    """PglTurtle.down(angle): the frame turned about its left, its heading towards its up's opposite."""
-    left = left_of(heading, up)
-    heading[:] = _rotate(heading, left, radians(angle))
-    up[:] = _rotate(up, left, radians(angle))
-
-
-@njit(cache=True)
-def turn_left(heading, up, angle):
-    """PglTurtle.left(angle): the frame turned about its up, its heading towards its left."""
-    heading[:] = _rotate(heading, up, radians(angle))
-
-
-@njit(cache=True)
-def roll_to_vertical(heading, up):
-    """PglTurtle.rollToVert(): the frame rolled about its heading so that its left is horizontal (L along z × H;
-    (0, -1, 0) when the heading is vertical, as PlantGL)."""
-    left = np.array([-heading[1], heading[0], 0.])
-    norm = sqrt(left[0] ** 2 + left[1] ** 2)
-    left = left / norm if norm > 1e-12 else np.array([0., -1., 0.])
-    up[:] = _cross(heading, left)
-
-
-@njit(cache=True)
-def follow_parents(order, parent, base_position, base_heading, base_up, pre_roll, down_angle, roll, elasticity, length,
-                   tropism):
-    """
-    Elements placed from their parent's end, as PlantGL's turtle draws a tree of segments: per element, from its
-    parent's end frame (from its *base_* position, heading and up when it has no parent, *parent* -1):
-      1. rollL(*pre_roll*) (°);
-      2. down(*down_angle*) (°);
-      3. rollL(*roll*) (°);
-      4. the tropism: the frame turned about H × *tropism* by *elasticity* times the angle between H and *tropism*
-         (PglTurtle.F's, whatever the length; none for a zero length, as F(0));
-      5. forward by *length*.
-    *order*: a pre-order of the elements (a parent before its children, e.g. ds.order("pre")); *parent*: each one's
-    parent's index, -1 for none; per element arrays, base_* (n, 3). Returns (position, heading, up, end), each (n, 3):
-    the element's start, its frame after the tropism (the one it is drawn in, and its children start from), its end.
-    """
-    n = parent.size
-    position, heading, up, end = np.zeros((n, 3)), np.zeros((n, 3)), np.zeros((n, 3)), np.zeros((n, 3))
-    norm_tropism = sqrt(tropism[0] ** 2 + tropism[1] ** 2 + tropism[2] ** 2)
-    target = tropism / norm_tropism if norm_tropism > 0. else tropism
-    for i in order:
-        k = parent[i]
-        if k < 0:
-            p, h, u = base_position[i].copy(), base_heading[i].copy(), base_up[i].copy()
-        else:
-            p, h, u = end[k].copy(), heading[k].copy(), up[k].copy()
-        if pre_roll[i] != 0.:
-            roll_right(h, u, -pre_roll[i])
-        if down_angle[i] != 0.:
-            down(h, u, down_angle[i])
-        if roll[i] != 0.:
-            roll_right(h, u, -roll[i])
-        if elasticity[i] != 0. and norm_tropism > 0. and length[i] != 0.:
-            axis = _cross(h, target)
-            sine = sqrt(axis[0] ** 2 + axis[1] ** 2 + axis[2] ** 2)
-            if sine > 1e-12:
-                cosine = min(1., max(-1., h[0] * target[0] + h[1] * target[1] + h[2] * target[2]))
-                angle = elasticity[i] * np.arccos(cosine)
-                axis = axis / sine
-                h[:] = _rotate(h, axis, angle)
-                u[:] = _rotate(u, axis, angle)
-        position[i], heading[i], up[i] = p, h, u
-        end[i] = p + h * length[i]
-    return position, heading, up, end
+def segment_cylinders(data_structure, where=None):
+    """The elements' default triangles (Triangles: each one's node index): a slim cylinder per element of nonzero
+    drawn length, from its drawn ends (drawn_ends: its display ends, else x1 ... z2) with its radius; *where*: a node
+    mask restricting them. None when the DataStructure has no segment ends (x1 ... z2 and radius)."""
+    if not all(data_structure.has(name) for name in SEGMENT_ENDS + ("radius",)):
+        return None
+    radius = np.asarray(data_structure.get("radius"), dtype=float).reshape(-1)
+    nodes = np.arange(radius.size) if where is None else np.flatnonzero(where)
+    start, end = drawn_ends(data_structure, nodes)
+    vertices, drawn = segment_triangles(start, end, radius[nodes])
+    return Triangles(vertices[drawn].reshape(-1, 3, 3), np.repeat(nodes[drawn], vertices.shape[1]))

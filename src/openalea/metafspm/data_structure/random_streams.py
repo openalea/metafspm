@@ -7,6 +7,14 @@ A model that drew from a global generator in visiting order (rhizodep's re-seedi
 same distributions, reproducibly, but not the same draws.
 
     u = uniform(vids, seed=plant_seed, stream="lateral_emergence", step=iteration)
+
+Entity ids depend on what else the MPG holds (the other plants of a population, the order of creation). Lineage keys
+do not: a plant's first element gets plant_keys(its seed), each new element child_keys(its parent's key, its edge to
+it, its rank among the siblings created at once); drawing with ids=keys gives each element the same draws whatever
+the population (52-bit keys, exact in a float array, so they can be stored as a variable).
+
+    keys = child_keys(parent_keys, "+", rank)
+    angle = normal(keys, 60., 10., stream="insertion_angle")
 """
 import zlib
 
@@ -34,6 +42,22 @@ def bits(ids, seed: int = 0, stream: str = "", step: int = 0, draw: int = 0) -> 
         state = _mix(np.uint64(seed) * _GOLDEN + _key(stream))
         state = _mix(state ^ (np.uint64(step) * _GOLDEN + np.uint64(draw)))
         return _mix(state ^ (ids * _GOLDEN + _GOLDEN))
+
+
+EDGES = {"<": 0, "+": 1, "/": 2}                  # the lineage's edges (a successor, a branch, a component)
+
+
+def plant_keys(seeds) -> np.ndarray:
+    """The lineage key of each plant's first element, from the plant's seed (52 bits)."""
+    return (bits(np.asarray(seeds, dtype=np.int64).reshape(-1), stream="seed") >> np.uint64(12)).astype(np.int64)
+
+
+def child_keys(parent_keys, edge: str, rank=0) -> np.ndarray:
+    """The lineage keys of new elements, from their parent's key, their *edge* to it ("<", "+" or "/") and their *rank*
+    among the parent's children of that edge created at once: a pure function of the element's place in its plant
+    (52 bits)."""
+    return (bits(np.asarray(parent_keys, dtype=np.int64).reshape(-1), stream="lineage", step=EDGES[edge],
+                 draw=rank) >> np.uint64(12)).astype(np.int64)
 
 
 def uniform(ids, low=0., high=1., seed: int = 0, stream: str = "", step: int = 0, draw: int = 0) -> np.ndarray:

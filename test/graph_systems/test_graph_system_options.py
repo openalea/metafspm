@@ -1,7 +1,7 @@
 """
 Graph-system options through components: the solver argument and its errors, solver keys giving the same steady
 solution, previous() at the start of the solve or of the sub-step, boundary_set variants (Neumann, Robin with a
-constant or per-node weight, per-node kinds, field= with several unknowns), boundary conditions written as
+constant or per-node weight, per-node conditions, field= with several unknowns), boundary conditions written as
 equations of coupled variables (@boundary_condition), pool unknowns given by their location
 only, forcings given as callables or (times, values) pairs, @graph_output write-back (location checks, active
 subgraphs), integrated edge amounts on an active subgraph, and filtered node balances.
@@ -12,51 +12,47 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from openalea.metafspm.coupling.choregrapher import Choregrapher
-from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, parameter, state_variable
+from openalea.metafspm.coupling.component import (FunctionalComponent, forcing_variable, input_variable, parameter,
+                                                   state_variable)
+from openalea.metafspm.coupling.forcings import as_forcing, forcing_mean, forcing_total, pulse
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
 from openalea.metafspm.data_structure.data_api import MPGDataStructure
-from openalea.metafspm.scene.population import build_population
+from openalea.metafspm.scene.population import _build_population
 from openalea.metafspm.solve.decorator import (boundary_condition, boundary_set, edge_law, graph_output, graph_system, node_balance,
-                                               pool_balance)
+                                               pool_balance, state)
 from openalea.metafspm.solve.solver import NewtonSolver
 from simple_seedling import generate_simple_mpg_seedling
 from growth import RootGrowthProbe
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 DT, K = 2., 0.3
 
 
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    Choregrapher().add_simulation_time_step(DT)
-
-
 def _ds():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    ds = MPGDataStructure(g, from_scale=g.scales.SubOrgan)
-    collar = np.zeros(ds.n_nodes())
-    collar[ds.roots()[0]] = 1.
-    ds.register("is_collar", collar, location="node")
-    return ds
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    data_structure = MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
+    collar = np.zeros(data_structure.n_nodes())
+    collar[data_structure.roots()[0]] = 1.
+    data_structure.register("is_collar", collar, location="node")
+    return data_structure
 
 
-def _laplacian(ds):
-    B = ds.incidence_matrix().toarray()
+def _laplacian(data_structure):
+    B = data_structure._incidence_matrix().toarray()
     return B @ B.T
 
 
 def _diffusion_residual(self, u):
-    B = self._graph_view.incidence
-    return (u - self.previous("u")) / self.dt + K * np.asarray(B @ (B.T @ u)).reshape(-1)
+    B = self.graph_view.incidence
+    return (u - self.previous("u")) / self.step_duration + K * np.asarray(B @ (B.T @ u)).reshape(-1)
 
 
-def _implicit_step(ds, u0, robin_weight=None, robin_value=None):
+def _implicit_step(data_structure, u0, robin_weight=None, robin_value=None):
     """One implicit Euler step of du/dt + K L u + w (u - v) = 0, solved by hand."""
-    A = np.eye(ds.n_nodes()) / DT + K * _laplacian(ds)
+    A = np.eye(data_structure.n_nodes()) / DT + K * _laplacian(data_structure)
     b = u0 / DT
     if robin_weight is not None:
         A += np.diag(robin_weight)
@@ -66,19 +62,23 @@ def _implicit_step(ds, u0, robin_weight=None, robin_value=None):
 
 # ---------------------------------------------------------------- the solver argument
 
-def test_solver_and_method_cannot_both_be_given():
-    with pytest.raises(TypeError, match="both 'solver' and 'method'"):
-        graph_system(node_unknowns=["u"], solver="implicit_euler", method="newton")
-
-
 def test_an_unknown_solver_key_is_refused():
     with pytest.raises(ValueError, match="Unknown solver 'bogus'"):
         graph_system(node_unknowns=["u"], solver="bogus")
 
 
-def test_a_solver_instance_is_refused():
-    with pytest.raises(TypeError, match="must be a str or an uninstantiated"):
-        graph_system(node_unknowns=["u"], solver=NewtonSolver())
+def test_a_solver_is_chosen_by_its_key_only():
+    for solver in (NewtonSolver, NewtonSolver()):
+        with pytest.raises(TypeError, match="a solver key"):
+            graph_system(node_unknowns=["u"], solver=solver)
+
+
+def test_the_former_option_names_raise():
+    for old in ("tolerance", "rtol", "atol"):
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            graph_system(node_unknowns=["u"], **{old: 2})
+    with pytest.raises(ValueError, match="integrate must be"):
+        graph_system(node_unknowns=["u"], integrate="st" + "ep")
 
 
 # ---------------------------------------------------------------- solver keys give the same steady solution
@@ -86,13 +86,13 @@ def test_a_solver_instance_is_refused():
 class _SteadyEquations:
     @node_balance(field="u")
     def _balance(self, u, source):
-        B = self._graph_view.incidence
+        B = self.graph_view.incidence
         return K * np.asarray(B @ (B.T @ u)).reshape(-1) + u + 0.1 * u ** 3 - source
 
 
 @dataclass
 class SteadyFields(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     source: float = parameter(**DOC, by="", default=1., location="node")
     time_step = DT
 
@@ -106,20 +106,19 @@ def _steady_class(name, solver):
 STEADY = {"newton": _steady_class("SteadyNewton", "newton"),
           "newton_fd": _steady_class("SteadyNewtonFD", "newton_fd"),
           "scipy_krylov": _steady_class("SteadyKrylov", "scipy_krylov"),
-          "scipy_hybr": _steady_class("SteadyHybr", "scipy_hybr"),
-          "NewtonSolver": _steady_class("SteadyNewtonClass", NewtonSolver)}
+          "scipy_hybr": _steady_class("SteadyHybr", "scipy_hybr")}
 
 
 def _steady(solver):
-    ds = _ds()
-    model = STEADY[solver](data_structure=ds)
-    ds.set("source", np.linspace(0., 2., ds.n_nodes()))
+    data_structure = _ds()
+    model = STEADY[solver](data_structure=data_structure)
+    data_structure.set("source", np.linspace(0., 2., data_structure.n_nodes()))
     model()
-    return ds.get("u").copy()
+    return data_structure.get("u").copy()
 
 
-@pytest.mark.parametrize("solver", ["newton_fd", "scipy_krylov", "scipy_hybr", "NewtonSolver"])
-def test_solver_keys_and_classes_reach_the_same_steady_solution(solver):
+@pytest.mark.parametrize("solver", ["newton_fd", "scipy_krylov", "scipy_hybr"])
+def test_solver_keys_reach_the_same_steady_solution(solver):
     reference = _steady("newton")
     assert np.abs(reference).max() > 0.1
     np.testing.assert_allclose(_steady(solver), reference, rtol=1e-6, atol=1e-8)
@@ -129,130 +128,130 @@ def test_solver_keys_and_classes_reach_the_same_steady_solution(solver):
 
 @dataclass
 class Decay(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
     seen = None
 
-    @graph_system(node_unknowns=["u"], transient=True, integrate="substeps", n_substeps=4)
+    @graph_system(node_unknowns=["u"], transient=True, integrate="substeps", substeps=4)
     class _solve:
         @node_balance(field="u")
         def _balance(self, u):
             type(self).seen.append((self.previous("u", at="solve").copy(), self.previous("u").copy()))
-            return (u - self.previous("u")) / self.dt + u
+            return (u - self.previous("u")) / self.step_duration + u
 
 
 def test_previous_at_solve_is_the_start_of_the_call_and_at_substep_the_start_of_each_substep():
-    ds = _ds()
-    model = Decay(data_structure=ds)
-    ds.set("u", np.linspace(1., 2., ds.n_nodes()))
-    u0 = ds.get("u").copy()
+    data_structure = _ds()
+    model = Decay(data_structure=data_structure)
+    data_structure.set("u", np.linspace(1., 2., data_structure.n_nodes()))
+    u0 = data_structure.get("u").copy()
     Decay.seen = []
     model()
     for at_solve, _ in Decay.seen:
         np.testing.assert_array_equal(at_solve, u0)
     starts = {tuple(np.round(at_substep, 12)) for _, at_substep in Decay.seen}
     assert len(starts) == 4                                                  # one start per sub-step
-    np.testing.assert_allclose(ds.get("u"), u0 / (1. + DT / 4.) ** 4)
+    np.testing.assert_allclose(data_structure.get("u"), u0 / (1. + DT / 4.) ** 4)
 
 
 # ---------------------------------------------------------------- boundary_set variants
 
 @dataclass
 class Neumann(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="neumann", value=0.25)
+        collar = boundary_set(where={"is_collar": ">0"}, condition="neumann", value=0.25)
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
 def test_a_neumann_set_is_an_inflow_of_its_value():
-    ds = _ds()
-    model = Neumann(data_structure=ds)
-    total = ds.get("u").sum()
+    data_structure = _ds()
+    model = Neumann(data_structure=data_structure)
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.25 * DT)
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.25 * DT)
 
 
 @dataclass
 class ConstantRobin(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="robin", value=0.5, weight=2.)
+        collar = boundary_set(where={"is_collar": ">0"}, condition="robin", value=0.5, weight=2.)
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
 def test_a_robin_set_with_a_constant_weight_is_an_exchange_towards_its_value():
-    ds = _ds()
-    model = ConstantRobin(data_structure=ds)
-    u0 = np.linspace(1., 2., ds.n_nodes())
-    ds.set("u", u0)
+    data_structure = _ds()
+    model = ConstantRobin(data_structure=data_structure)
+    u0 = np.linspace(1., 2., data_structure.n_nodes())
+    data_structure.set("u", u0)
     model()
-    collar = ds.get("is_collar") > 0
-    np.testing.assert_allclose(ds.get("u"), _implicit_step(ds, u0, 2. * collar, 0.5), rtol=1e-10)
+    collar = data_structure.get("is_collar") > 0
+    np.testing.assert_allclose(data_structure.get("u"), _implicit_step(data_structure, u0, 2. * collar, 0.5), rtol=1e-10)
 
 
 @dataclass
 class RobinByCode(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    kind_code: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan, dtype="int")
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    condition_code: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, dtype="int")
     conductance: float = parameter(**DOC, by="", default=0., location="node")
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
-        tips = boundary_set(filters=lambda ds: np.ones(ds.n_nodes(), dtype=bool), kinds="kind_code", value=3.,
+        tips = boundary_set(where=lambda data_structure: np.ones(data_structure.n_nodes(), dtype=bool), condition_variable="condition_code", value=3.,
                             weight="conductance")
         _balance = node_balance(field="u")(_diffusion_residual)
 
 
-def test_per_node_kinds_apply_robin_where_the_code_says_so_with_per_node_weights():
-    ds = _ds()
-    model = RobinByCode(data_structure=ds)
-    u0 = np.linspace(1., 2., ds.n_nodes())
-    ds.set("u", u0)
-    leaves = np.setdiff1d(np.arange(ds.n_nodes()), ds.parents())             # nodes no other node has as parent
-    codes = np.zeros(ds.n_nodes(), dtype=np.int64)
+def test_per_node_conditions_apply_robin_where_the_code_says_so_with_per_node_weights():
+    data_structure = _ds()
+    model = RobinByCode(data_structure=data_structure)
+    u0 = np.linspace(1., 2., data_structure.n_nodes())
+    data_structure.set("u", u0)
+    leaves = np.setdiff1d(np.arange(data_structure.n_nodes()), data_structure.parents())             # nodes no other node has as parent
+    codes = np.zeros(data_structure.n_nodes(), dtype=np.int64)
     codes[leaves] = boundary_set.CODES["robin"]
-    weights = np.linspace(0.5, 1.5, ds.n_nodes())
-    ds.set("kind_code", codes)
-    ds.set("conductance", weights)
+    weights = np.linspace(0.5, 1.5, data_structure.n_nodes())
+    data_structure.set("condition_code", codes)
+    data_structure.set("conductance", weights)
     model()
-    expected = _implicit_step(ds, u0, np.where(codes == 3, weights, 0.), 3.)
-    np.testing.assert_allclose(ds.get("u"), expected, rtol=1e-10)
+    expected = _implicit_step(data_structure, u0, np.where(codes == 3, weights, 0.), 3.)
+    np.testing.assert_allclose(data_structure.get("u"), expected, rtol=1e-10)
 
 
 @dataclass
 class TwoUnknowns(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    w: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    w: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=4., field="w")
+        collar = boundary_set(where={"is_collar": ">0"}, condition="dirichlet", value=4., field="w")
         _u = node_balance(field="u")(_diffusion_residual)
 
         @node_balance(field="w")
         def _w(self, w):
-            B = self._graph_view.incidence
-            return (w - self.previous("w")) / self.dt + K * np.asarray(B @ (B.T @ w)).reshape(-1)
+            B = self.graph_view.incidence
+            return (w - self.previous("w")) / self.step_duration + K * np.asarray(B @ (B.T @ w)).reshape(-1)
 
 
 @dataclass
 class TwoUnknownsWithoutField(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    w: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    w: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u", "w"], transient=True)
     class _solve:
-        collar = boundary_set(filters={"is_collar": ">0"}, kind="dirichlet", value=4.)
+        collar = boundary_set(where={"is_collar": ">0"}, condition="dirichlet", value=4.)
         _u = node_balance(field="u")(_diffusion_residual)
 
         @node_balance(field="w")
@@ -261,22 +260,22 @@ class TwoUnknownsWithoutField(FunctionalComponent):
 
 
 def test_field_chooses_the_unknown_of_a_set_and_is_required_with_several_unknowns():
-    ds = _ds()
-    TwoUnknowns(data_structure=ds)()
-    collar = ds.get("is_collar") > 0
-    np.testing.assert_allclose(ds.get("w")[collar], 4.)
-    np.testing.assert_allclose(ds.get("u"), 1.)                               # uniform, no condition on u
+    data_structure = _ds()
+    TwoUnknowns(data_structure=data_structure)()
+    collar = data_structure.get("is_collar") > 0
+    np.testing.assert_allclose(data_structure.get("w")[collar], 4.)
+    np.testing.assert_allclose(data_structure.get("u"), 1.)                               # uniform, no condition on u
     with pytest.raises(ValueError, match="give field=, the system has several node unknowns"):
         TwoUnknownsWithoutField(data_structure=_ds())()
 
 
 def test_boundary_set_arguments_are_checked():
     with pytest.raises(ValueError, match="not both"):
-        boundary_set(filters={"is_collar": ">0"}, kind="robin", kinds="kind_code")
-    with pytest.raises(ValueError, match="kind must be one of"):
-        boundary_set(filters={"is_collar": ">0"}, kind="flux")
-    with pytest.raises(TypeError, match="filters must be"):
-        boundary_set(filters=3, kind="dirichlet")
+        boundary_set(where={"is_collar": ">0"}, condition="robin", condition_variable="condition_code")
+    with pytest.raises(ValueError, match="condition must be one of"):
+        boundary_set(where={"is_collar": ">0"}, condition="flux")
+    with pytest.raises(TypeError, match="where must be"):
+        boundary_set(where=3, condition="dirichlet")
 
 
 
@@ -285,83 +284,83 @@ def test_boundary_set_arguments_are_checked():
 @dataclass
 class CoupledInflow(FunctionalComponent):
     """A Neumann condition given by an equation of a coupled variable, read from the DataStructure at each solve."""
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    supply: float = input_variable(**DOC, by="Other", initialize=0.25, scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    supply: float = input_variable(**DOC, by="Other", default=0.25, scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "neumann", field="u", filters={"is_collar": ">0"})
+        @boundary_condition("node", "neumann", field="u", where={"is_collar": ">0"})
         def _collar(self, supply):
             return supply                                      # an inflow, sliced to the selected nodes
 
 
 def test_a_neumann_condition_is_an_inflow_read_from_the_data_structure_at_each_solve():
-    ds = _ds()
-    model = CoupledInflow(data_structure=ds)
-    total = ds.get("u").sum()
+    data_structure = _ds()
+    model = CoupledInflow(data_structure=data_structure)
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.25 * DT)             # the same sign as a boundary_set
-    ds.set("supply", np.full(ds.n_nodes(), 0.5))                               # e.g. written by a coupled model
-    total = ds.get("u").sum()
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.25 * DT)             # the same sign as a boundary_set
+    data_structure.set("supply", np.full(data_structure.n_nodes(), 0.5))                               # e.g. written by a coupled model
+    total = data_structure.get("u").sum()
     model()
-    assert ds.get("u").sum() == pytest.approx(total + 0.5 * DT)
+    assert data_structure.get("u").sum() == pytest.approx(total + 0.5 * DT)
 
 
 @dataclass
 class UptakeEquation(FunctionalComponent):
     """An exchange w (v - u) with an external value, written as an equation of the unknown and coupled variables."""
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    external: float = input_variable(**DOC, by="Soil", initialize=3., scale=scales.SubOrgan)
-    exchange_rate: float = input_variable(**DOC, by="Soil", initialize=0.4, scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    external: float = input_variable(**DOC, by="Soil", default=3., scale=scales.SubOrgan)
+    exchange_rate: float = input_variable(**DOC, by="Soil", default=0.4, scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "neumann", field="u", filters=lambda ds: np.asarray(ds.get("is_collar")) > 0)
+        @boundary_condition("node", "neumann", field="u", where=lambda data_structure: np.asarray(data_structure.get("is_collar")) > 0)
         def _collar(self, u, external, exchange_rate):
             return exchange_rate * (external - u)
 
 
 def test_a_condition_equation_of_the_unknown_is_solved_with_it():
-    ds = _ds()
-    model = UptakeEquation(data_structure=ds)
-    u0 = np.array(ds.get("u"))
+    data_structure = _ds()
+    model = UptakeEquation(data_structure=data_structure)
+    u0 = np.array(data_structure.get("u"))
     model()
-    weight = 0.4 * np.asarray(ds.get("is_collar"))
-    np.testing.assert_allclose(ds.get("u"), _implicit_step(ds, u0, robin_weight=weight, robin_value=3.), rtol=1e-9)
+    weight = 0.4 * np.asarray(data_structure.get("is_collar"))
+    np.testing.assert_allclose(data_structure.get("u"), _implicit_step(data_structure, u0, robin_weight=weight, robin_value=3.), rtol=1e-9)
 
 
 @dataclass
 class PrescribedCollar(FunctionalComponent):
     """A Dirichlet condition on the nodes of a DataStructure mask, at a coupled value."""
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    collar_value: float = input_variable(**DOC, by="Shoot", initialize=-0.3, scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    collar_value: float = input_variable(**DOC, by="Shoot", default=-0.3, scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @boundary_condition("node", "dirichlet", field="u", filters="collar")
+        @boundary_condition("node", "dirichlet", field="u", where="collar")
         def _collar(self, u, collar_value):
             return u - collar_value
 
 
 def test_a_dirichlet_condition_on_a_mask_follows_the_coupled_value():
-    ds = _ds()
-    ds.define_mask("collar", {"is_collar": ">0"})
-    model = PrescribedCollar(data_structure=ds)
-    collar = np.flatnonzero(np.asarray(ds.get("is_collar")) > 0)
+    data_structure = _ds()
+    data_structure.define_mask("collar", {"is_collar": ">0"})
+    model = PrescribedCollar(data_structure=data_structure)
+    collar = np.flatnonzero(np.asarray(data_structure.get("is_collar")) > 0)
     model()
-    np.testing.assert_allclose(np.asarray(ds.get("u"))[collar], -0.3)
-    ds.set("collar_value", np.full(ds.n_nodes(), -0.7))
+    np.testing.assert_allclose(np.asarray(data_structure.get("u"))[collar], -0.3)
+    data_structure.set("collar_value", np.full(data_structure.n_nodes(), -0.7))
     model()
-    np.testing.assert_allclose(np.asarray(ds.get("u"))[collar], -0.7)
+    np.testing.assert_allclose(np.asarray(data_structure.get("u"))[collar], -0.7)
 
 
 # ---------------------------------------------------------------- pools given by their location
@@ -370,12 +369,12 @@ EXCHANGE = 0.8
 
 
 def _population(sizes=(3, 4)):
-    table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., z=0., rotation=0.,
-                               scenario={"parameters": {"n_segments": n}}) for i, n in enumerate(sizes)])
-    g, _ = build_population(table, initiators=(RootGrowthProbe,))
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    table = pd.DataFrame([dict(plant=f"p{i}", model=None, x=0.1 * i, y=0., depth=0., rotation=0.,
+                               scenario={"n_segments": n}) for i, n in enumerate(sizes)])
+    mtg, _ = _build_population(table, initiators=(RootGrowthProbe,))
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 class _PoolEquations:
@@ -383,30 +382,30 @@ class _PoolEquations:
     def _balance(self, sugar, shoot):
         P = self.pool_exchange("shoot")
         exchange = P @ shoot - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
-        return (sugar - self.previous("sugar")) / self.dt - EXCHANGE * exchange
+        return (sugar - self.previous("sugar")) / self.step_duration - EXCHANGE * exchange
 
     @pool_balance(field="shoot")
     def _shoot(self, sugar, shoot):
         P = self.pool_exchange("shoot")
         exchange = P @ shoot - np.asarray(P.sum(axis=1)).reshape(-1) * sugar
-        return (shoot - self.previous("shoot")) / self.dt + EXCHANGE * np.asarray(P.T @ exchange).reshape(-1)
+        return (shoot - self.previous("shoot")) / self.step_duration + EXCHANGE * np.asarray(P.T @ exchange).reshape(-1)
 
 
 @dataclass
 class EveryNodePool(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    shoot: float = state_variable(**DOC, initialize=0., scale=scales.Plant)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    shoot: float = state_variable(**DOC, default=0., scale=scales.Plant)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], transient=True, pool_unknowns={"shoot": "Plant"}
                           )(type("_solve", (_PoolEquations,), {}))
 
 
 def test_a_pool_given_by_its_location_exchanges_with_every_node_of_its_plant():
-    ds = _population()
-    model = EveryNodePool(data_structure=ds)
-    ds.set("shoot", [6., 0.])
+    data_structure = _population()
+    model = EveryNodePool(data_structure=data_structure)
+    data_structure.set("shoot", [6., 0.])
     model()
-    n, owner = ds.n_nodes(), np.asarray(ds.owner("Plant"))
+    n, owner = data_structure.n_nodes(), np.asarray(data_structure.owner("Plant"))
     P = np.zeros((n, 2))
     P[np.arange(n), owner] = 1.
     A = np.zeros((n + 2, n + 2))
@@ -415,9 +414,9 @@ def test_a_pool_given_by_its_location_exchanges_with_every_node_of_its_plant():
     A[n:, :n] = -EXCHANGE * P.T
     A[n:, n:] = np.eye(2) / DT + EXCHANGE * np.diag(P.sum(axis=0))
     x = np.linalg.solve(A, np.r_[np.zeros(n), 6., 0.] / DT)
-    np.testing.assert_allclose(ds.get("sugar"), x[:n], rtol=1e-8, atol=1e-12)
-    np.testing.assert_allclose(ds.get("shoot"), x[n:], rtol=1e-8)
-    assert (ds.get("sugar")[owner == 0] > 0.).all() and (ds.get("sugar")[owner == 1] == 0.).all()
+    np.testing.assert_allclose(data_structure.get("sugar"), x[:n], rtol=1e-8, atol=1e-12)
+    np.testing.assert_allclose(data_structure.get("shoot"), x[n:], rtol=1e-8)
+    assert (data_structure.get("sugar")[owner == 0] > 0.).all() and (data_structure.get("sugar")[owner == 1] == 0.).all()
 
 
 def test_pool_exchange_names_a_pool_of_the_solve():
@@ -428,8 +427,8 @@ def test_pool_exchange_names_a_pool_of_the_solve():
 
 @dataclass
 class UndeclaredExchange(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    shoot: float = state_variable(**DOC, initialize=0., scale=scales.Plant)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    shoot: float = state_variable(**DOC, default=0., scale=scales.Plant)
     time_step = DT
     _solve = graph_system(node_unknowns=["sugar"], transient=True,
                           pool_unknowns={"shoot": {"location": "Plant", "exchange": "collar"}}
@@ -438,8 +437,8 @@ class UndeclaredExchange(FunctionalComponent):
 
 @dataclass
 class PoolWithoutBalance(FunctionalComponent):
-    sugar: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
-    shoot: float = state_variable(**DOC, initialize=0., scale=scales.Plant)
+    sugar: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    shoot: float = state_variable(**DOC, default=0., scale=scales.Plant)
     time_step = DT
 
     @graph_system(node_unknowns=["sugar"], transient=True, pool_unknowns={"shoot": "Plant"})
@@ -462,14 +461,14 @@ def test_pool_declarations_are_checked():
 
 @dataclass
 class Supplied(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
         @node_balance(field="u")
         def _balance(self, u):
-            return (u - self.previous("u")) / self.dt - self.forcing("supply")
+            return (u - self.previous("u")) / self.step_duration - self.forcing("supply")
 
 
 @pytest.mark.parametrize("supply", [lambda t: 3. * t,
@@ -477,11 +476,71 @@ class Supplied(FunctionalComponent):
                                     ([0., 10.], [0., 30.])],
                          ids=["callable", "series", "times_values"])
 def test_forcings_given_as_callables_or_times_and_values(supply):
-    ds = _ds()
-    model = Supplied(data_structure=ds)
-    model.forcings = {"supply": supply}
+    data_structure = _ds()
+    model = Supplied(data_structure=data_structure)
+    model.set_forcings({"supply": supply})
     model()
-    np.testing.assert_allclose(ds.get("u"), DT * 3. * DT)                   # read at the end of the step, t = DT
+    np.testing.assert_allclose(data_structure.get("u"), DT * 1.5 * DT)                  # its mean over the step [0, DT]
+
+
+@dataclass
+class Watered(FunctionalComponent):
+    """A component reading a rain's depth over its step (aggregate="total") and the light's mean (by default) and its
+    value at the step's end ("instant")."""
+    water: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+    light: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    last: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
+    rain: float = forcing_variable(unit="m", description="The rain's depth", aggregate="total")
+    PARi: float = forcing_variable(unit="µmol m-2 s-1", description="The incident PAR")
+    temperature: float = forcing_variable(unit="°C", description="At the step's end", aggregate="instant")
+
+    @state
+    def _watered(self, water):
+        return {"water": water + self.forcing("rain"), "light": np.full_like(water, self.forcing("PARi")),
+                "last": np.full_like(water, self.forcing("temperature"))}
+
+
+def _watered(time_step, steps, forcings):
+    data_structure = _ds()
+    data_structure.simulation_time_step = time_step
+    model = Watered(data_structure=data_structure, time_step=time_step)
+    model.set_forcings(forcings)
+    lights = []
+    for _ in range(steps):
+        model()
+        lights.append(float(data_structure.get("light")[0]))
+    return data_structure, lights
+
+
+def test_forcings_over_the_step_do_not_depend_on_it():
+    """A rain given by its total (pulse) reaches the soil whole at any step; a daily course's mean over a day is the
+    mean of its hourly means; the totals and the means are exact (tables, pulses) or the 4-point Gauss-Legendre
+    rule's (functions)."""
+    hour, day = 3600., 86400.
+    course = lambda t: 1. + np.sin(2. * np.pi * t / day) ** 2                    # noqa: E731
+    forcings = {"rain": pulse(14 * hour, 15 * hour, 5e-3), "PARi": course, "temperature": lambda t: t}
+    hourly, lights = _watered(hour, 24, forcings)
+    daily, light = _watered(day, 1, forcings)
+    np.testing.assert_allclose(hourly.get("water"), 5e-3)
+    np.testing.assert_allclose(daily.get("water"), 5e-3)                     # the instant at 24 h has no rain
+    assert np.mean(lights) == pytest.approx(light[0], rel=1e-6) and light[0] == pytest.approx(1.5, rel=1e-6)
+    np.testing.assert_allclose(daily.get("last"), day)                         # "instant": at the step's end
+    half, _ = _watered(hour / 2, 29, forcings)
+    np.testing.assert_allclose(half.get("water"), 2.5e-3)                      # half of the pulse: by 14.5 h
+
+
+def test_forcing_aggregates():
+    with pytest.raises(ValueError, match="aggregate"):
+        forcing_variable(aggregate="sum")
+    series = pd.Series([0., 10., 0.], index=[0., 10., 20.])
+    assert forcing_mean(series, 0., 20.) == pytest.approx(5.)                   # exact: piecewise linear
+    assert forcing_mean(series, -10., 0.) == 0. and forcing_mean(series, 5., 5.) == pytest.approx(5.)
+    assert forcing_total(pulse(10., 20., 5.), 15., 25.) == pytest.approx(2.5)
+    assert forcing_mean(lambda t: t ** 7, 0., 1.) == pytest.approx(1. / 8.)      # Gauss-Legendre: degree 7 exact
+    in_hours = as_forcing([0., 1., 2., 3.], time_unit="h")
+    assert forcing_mean(in_hours, 0., 3 * 3600.) == pytest.approx(1.5)
+    with pytest.raises(ValueError, match="end after its start"):
+        pulse(2., 1., 1.)
 
 
 def test_a_missing_forcing_raises():
@@ -490,12 +549,28 @@ def test_a_missing_forcing_raises():
         model.forcing("absent")
 
 
+def test_forcings_set_outside_a_scene_are_those_a_scene_gives():
+    from openalea.metafspm.coupling.forcings import as_forcing
+    model = Supplied(data_structure=_ds())
+    assert not model.has_forcing("supply")
+    hourly = as_forcing(np.arange(24.), time_unit="h", origin="calendar")      # the hour of the day
+    model.set_forcings(pd.DataFrame({"supply": [0., 30.]}, index=[0., 10.]))         # a table, as a Scene's
+    assert model.has_forcing("supply") and model.forcing("supply") == pytest.approx(1.5 * DT)
+    model.set_forcings({"hourly": hourly, "by_entity": lambda time, ids: np.ones(len(ids))},
+                       start="2026-04-10 06:00")
+    assert not model.has_forcing("supply") and not model.has_forcing("by_entity")     # replaced; varies in space
+    assert model.forcing("hourly") == pytest.approx(6. + DT / 7200.)                  # its mean over [0, DT]
+    assert model.calendar(0.) == (100., 6.)
+    with pytest.raises(ValueError, match="needs start"):
+        model.set_forcings({"hourly": as_forcing(np.arange(24.), time_unit="h", origin="calendar")})
+
+
 # ---------------------------------------------------------------- @graph_output write-back
 
 @dataclass
 class WrongOutputLocation(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    doubled: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    doubled: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
@@ -514,20 +589,20 @@ def test_an_output_location_must_be_the_registered_one():
 
 @dataclass
 class ActiveOutputs(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
-    flux: float = state_variable(**DOC, initialize=0., location="edge")
-    doubled: float = state_variable(**DOC, initialize=-1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
+    flux: float = state_variable(**DOC, default=0., location="edge")
+    doubled: float = state_variable(**DOC, default=-1., scale=scales.SubOrgan)
     time_step = DT
 
-    @graph_system(node_unknowns=["u"], edge_unknowns=["flux"], transient=True, filters="active")
+    @graph_system(node_unknowns=["u"], edge_unknowns=["flux"], transient=True, where="active")
     class _solve:
         @node_balance(field="u")
         def _balance(self, u, flux):
-            return (u - self.previous("u")) / self.dt + np.asarray(self._graph_view.incidence @ flux).reshape(-1)
+            return (u - self.previous("u")) / self.step_duration + np.asarray(self.graph_view.incidence @ flux).reshape(-1)
 
         @edge_law(field="flux", integrate=True)
         def _fick(self, u, flux):
-            return flux - K * np.asarray(self._graph_view.incidence.T @ u).reshape(-1)
+            return flux - K * np.asarray(self.graph_view.incidence.T @ u).reshape(-1)
 
         @graph_output("doubled")
         def _doubled(self, u):
@@ -539,56 +614,56 @@ class ActiveOutputs(FunctionalComponent):
 
 
 def _active_ds(dead):
-    ds = _ds()
-    ds.register("u", np.linspace(1., 2., ds.n_nodes()), location="node")
-    alive = np.ones(ds.n_nodes())
+    data_structure = _ds()
+    data_structure.register("u", np.linspace(1., 2., data_structure.n_nodes()), location="node")
+    alive = np.ones(data_structure.n_nodes())
     alive[dead] = 0.
-    ds.register("alive", alive, location="node")
-    ds.define_mask("active", {"alive": ">0"})
-    return ds
+    data_structure.register("alive", alive, location="node")
+    data_structure.define_mask("active", {"alive": ">0"})
+    return data_structure
 
 
-def _dropped_edges(ds, dead):
-    vids = ds.entity_ids("node")
+def _dropped_edges(data_structure, dead):
+    vids = data_structure.entity_ids("node")
     dead_vids = set(vids[np.atleast_1d(dead)].tolist())
-    return np.array([a in dead_vids or b in dead_vids for a, b in ds.edges()])
+    return np.array([a in dead_vids or b in dead_vids for a, b in data_structure.edges()])
 
 
 def test_outputs_on_an_active_subgraph_leave_the_other_entities_alone():
     dead = np.array([5, 6])
-    ds = _active_ds(dead)
-    ActiveOutputs(data_structure=ds)()
-    active = ds.get("alive") > 0
-    np.testing.assert_allclose(ds.get("doubled")[active], 2. * ds.get("u")[active])
-    np.testing.assert_array_equal(ds.get("doubled")[~active], -1.)          # inactive nodes keep their values
-    dropped = _dropped_edges(ds, dead)
+    data_structure = _active_ds(dead)
+    ActiveOutputs(data_structure=data_structure)()
+    active = data_structure.get("alive") > 0
+    np.testing.assert_allclose(data_structure.get("doubled")[active], 2. * data_structure.get("u")[active])
+    np.testing.assert_array_equal(data_structure.get("doubled")[~active], -1.)          # inactive nodes keep their values
+    dropped = _dropped_edges(data_structure, dead)
     assert dropped.any() and not dropped.all()
-    np.testing.assert_array_equal(ds.get("edge_marker")[~dropped], 1.)
-    np.testing.assert_array_equal(ds.get("edge_marker")[dropped], 0.)       # dropped edges get no value
+    np.testing.assert_array_equal(data_structure.get("edge_marker")[~dropped], 1.)
+    np.testing.assert_array_equal(data_structure.get("edge_marker")[dropped], 0.)       # dropped edges get no value
 
 
 def test_integrated_amounts_on_an_active_subgraph_are_kept_on_dropped_edges():
-    ds = _active_ds(np.array([], dtype=np.int64))
-    model = ActiveOutputs(data_structure=ds)
+    data_structure = _active_ds(np.array([], dtype=np.int64))
+    model = ActiveOutputs(data_structure=data_structure)
     model()
-    first = ds.get("flux_amount").copy()
-    np.testing.assert_allclose(first, ds.get("flux") * DT)
+    first = data_structure.get("flux_amount").copy()
+    np.testing.assert_allclose(first, data_structure.get("flux") * DT)
     dead = np.array([5, 6])
-    alive = np.ones(ds.n_nodes())
+    alive = np.ones(data_structure.n_nodes())
     alive[dead] = 0.
-    ds.set("alive", alive)
+    data_structure.set("alive", alive)
     model()
-    dropped = _dropped_edges(ds, dead)
-    np.testing.assert_array_equal(ds.get("flux_amount")[dropped], first[dropped])
-    np.testing.assert_array_equal(ds.get("flux")[dropped], 0.)
-    np.testing.assert_allclose(ds.get("flux_amount")[~dropped], first[~dropped] + ds.get("flux")[~dropped] * DT)
+    dropped = _dropped_edges(data_structure, dead)
+    np.testing.assert_array_equal(data_structure.get("flux_amount")[dropped], first[dropped])
+    np.testing.assert_array_equal(data_structure.get("flux")[dropped], 0.)
+    np.testing.assert_allclose(data_structure.get("flux_amount")[~dropped], first[~dropped] + data_structure.get("flux")[~dropped] * DT)
 
 
 # ---------------------------------------------------------------- filtered node balances
 
 @dataclass
 class ZonedSource(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     zone: float = parameter(**DOC, by="", default=0., location="node")
     source: float = parameter(**DOC, by="", default=0., location="node")
     time_step = DT
@@ -597,64 +672,64 @@ class ZonedSource(FunctionalComponent):
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @node_balance(field="u", filters={"zone": [1]})
+        @node_balance(field="u", where={"zone": [1]})
         def _zone_source(self, u, source):
             return -source
 
 
 @dataclass
 class FilterOnMissingVariable(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=0., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=0., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @node_balance(field="u", filters={"nowhere": [1]})
+        @node_balance(field="u", where={"nowhere": [1]})
         def _zone_source(self, u):
             return np.ones_like(u)
 
 
 def test_a_filtered_balance_adds_its_terms_on_the_selected_nodes_only():
-    ds = _ds()
-    zone = (np.arange(ds.n_nodes()) % 2).astype(float)
-    source = np.linspace(1., 2., ds.n_nodes())
-    model = ZonedSource(data_structure=ds)
-    ds.set("zone", zone)
-    ds.set("source", source)
+    data_structure = _ds()
+    zone = (np.arange(data_structure.n_nodes()) % 2).astype(float)
+    source = np.linspace(1., 2., data_structure.n_nodes())
+    model = ZonedSource(data_structure=data_structure)
+    data_structure.set("zone", zone)
+    data_structure.set("source", source)
     model()
-    A = np.eye(ds.n_nodes()) / DT + K * _laplacian(ds)
-    np.testing.assert_allclose(ds.get("u"), np.linalg.solve(A, np.where(zone == 1, source, 0.)), rtol=1e-10)
+    A = np.eye(data_structure.n_nodes()) / DT + K * _laplacian(data_structure)
+    np.testing.assert_allclose(data_structure.get("u"), np.linalg.solve(A, np.where(zone == 1, source, 0.)), rtol=1e-10)
     with pytest.raises(KeyError, match="variable 'nowhere' is not registered"):
         FilterOnMissingVariable(data_structure=_ds())()
 
 
 @dataclass
 class SelectedOutput(FunctionalComponent):
-    u: float = state_variable(**DOC, initialize=1., scale=scales.SubOrgan)
+    u: float = state_variable(**DOC, default=1., scale=scales.SubOrgan)
     time_step = DT
 
     @graph_system(node_unknowns=["u"], transient=True)
     class _solve:
         _balance = node_balance(field="u")(_diffusion_residual)
 
-        @graph_output("collar_u", location="node", filters={"is_collar": ">0"})
+        @graph_output("collar_u", location="node", where={"is_collar": ">0"})
         def _collar_u(self, u):
             self.seen = len(u)                                           # the arguments are sliced to the selection
             return 2. * u
 
 
 def test_a_selected_output_is_computed_on_its_nodes_only():
-    ds = _ds()
-    model = SelectedOutput(data_structure=ds)
+    data_structure = _ds()
+    model = SelectedOutput(data_structure=data_structure)
     model()
-    collar = np.asarray(ds.get("is_collar")) > 0
-    np.testing.assert_allclose(np.asarray(ds.get("collar_u"))[collar], 2. * np.asarray(ds.get("u"))[collar])
-    np.testing.assert_array_equal(np.asarray(ds.get("collar_u"))[~collar], 0.)
+    collar = np.asarray(data_structure.get("is_collar")) > 0
+    np.testing.assert_allclose(np.asarray(data_structure.get("collar_u"))[collar], 2. * np.asarray(data_structure.get("u"))[collar])
+    np.testing.assert_array_equal(np.asarray(data_structure.get("collar_u"))[~collar], 0.)
     assert model.seen == collar.sum() == 1
 
 
 def test_a_selected_output_is_on_nodes():
-    with pytest.raises(ValueError, match="filters= chooses nodes"):
-        graph_output("flux", location="edge", filters={"is_collar": ">0"})
+    with pytest.raises(ValueError, match="where= chooses nodes"):
+        graph_output("flux", location="edge", where={"is_collar": ">0"})

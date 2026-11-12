@@ -14,17 +14,9 @@ from openalea.metafspm.coupling.component import FunctionalComponent, parameter,
 from openalea.metafspm.data_structure.data_api import ArrayDataStructure
 from openalea.metafspm.solve.decorator import boundary_set, edge_law, graph_output, graph_system, node_balance
 
-DOC = dict(unit="", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
+DOC = dict(unit="adim", unit_comment="", description="", min_value=0., max_value=1., value_comment="", references="",
            DOI=[])
 SHAPE, DX, DT, D = (4, 3, 5), (0.1, 0.2, 0.05), 0.5, 1e-3
-
-
-@pytest.fixture(autouse=True)
-def _simulation_time_step():
-    """The scene's step is the components' (one solve per call)."""
-    from openalea.metafspm.coupling.choregrapher import Choregrapher
-    Choregrapher().add_simulation_time_step(DT)
-
 
 
 class _DiffusionEquations:
@@ -33,13 +25,13 @@ class _DiffusionEquations:
     @node_balance(field="solute")
     def _balance(self, solute, solute_flux, uptake):
         volume = self.data_structure.cell_volume()
-        return (solute - self.previous("solute")) / self.dt \
-            + np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1) / volume - uptake
+        return (solute - self.previous("solute")) / self.step_duration \
+            + np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1) / volume - uptake
 
     @edge_law(field="solute_flux")
     def _fick(self, solute, solute_flux, diffusivity, face_area, face_distance):
         return solute_flux - diffusivity * face_area / face_distance \
-            * np.asarray(self._graph_view.incidence.T @ solute).reshape(-1)
+            * np.asarray(self.graph_view.incidence.T @ solute).reshape(-1)
 
 
 def _diffusion(groundwater=False, **options):
@@ -47,7 +39,7 @@ def _diffusion(groundwater=False, **options):
                             transient=True, **options)
     if groundwater:
         class _diffusion(_DiffusionEquations):
-            bottom = boundary_set(filters=lambda ds: ds.layer_mask(z=-1), kind="dirichlet", value=0.9)
+            bottom = boundary_set(where=lambda data_structure: data_structure.layer_mask(z=-1), condition="dirichlet", value=0.9)
     else:
         class _diffusion(_DiffusionEquations):
             pass
@@ -56,8 +48,8 @@ def _diffusion(groundwater=False, **options):
 
 @dataclass
 class SoilFields(FunctionalComponent):
-    solute: float = state_variable(**DOC, initialize=0., location="cell")
-    solute_flux: float = state_variable(**DOC, initialize=0., location="edge")
+    solute: float = state_variable(**DOC, default=0., location="cell")
+    solute_flux: float = state_variable(**DOC, default=0., location="edge")
     uptake: float = parameter(**DOC, by="", default=0., location="cell")
     diffusivity: float = parameter(**DOC, by="", default=D, location="edge")
     time_step = DT
@@ -75,11 +67,11 @@ class FieldSoil(SoilFields):
 
 @dataclass
 class FrozenTopSoil(SoilFields):
-    _diffusion = _diffusion(filters="active")
+    _diffusion = _diffusion(where="active")
 
 
 def _grid(periodic=False):
-    grid = ArrayDataStructure(shape=SHAPE, dx=DX, periodic=periodic)
+    grid = ArrayDataStructure(shape=SHAPE, spacing=DX, periodic=periodic)
     rng = np.random.default_rng(3)
     grid.register("solute", rng.random(SHAPE), location="cell")
     grid.register("uptake", 0.01 * rng.random(SHAPE), location="cell")
@@ -126,12 +118,12 @@ def test_a_pot_has_no_flux_through_its_outer_faces():
 
 def test_a_frozen_layer_is_left_out_by_an_active_subgraph_of_cells():
     grid = _grid()
-    grid.define_mask("active", lambda ds: ~ds.layer_mask(z=0), location="cell")
+    grid.define_mask("active", lambda data_structure: ~data_structure.layer_mask(z=0), location="cell")
     before = np.array(grid.get("solute"))
     FrozenTopSoil(data_structure=grid)()
     top = grid.layer_mask(z=0)
     np.testing.assert_array_equal(grid.get("solute")[top], before[top])
-    crossing = top.reshape(-1)[grid.topology().tail] | top.reshape(-1)[grid.topology().head]
+    crossing = top.reshape(-1)[grid.to_graph_view().tail] | top.reshape(-1)[grid.to_graph_view().head]
     np.testing.assert_array_equal(grid.get("solute_flux")[crossing], 0.)
 
 
@@ -151,12 +143,12 @@ class DiffusionWithDivergence(SoilFields):
     class _diffusion(_DiffusionEquations):
         @graph_output("divergence", location="node")                     # "node": the grid's cells
         def _divergence(self, solute_flux):
-            return np.asarray(self._graph_view.incidence @ solute_flux).reshape(-1)
+            return np.asarray(self.graph_view.incidence @ solute_flux).reshape(-1)
 
 
 def test_a_node_output_on_a_grid_is_written_on_the_cells():
     grid = _grid()
     DiffusionWithDivergence(data_structure=grid)()
     assert grid.location("divergence") == "cell" and grid.get("divergence").shape == SHAPE
-    expected = (grid.incidence_matrix() @ np.asarray(grid.get("solute_flux"))).reshape(SHAPE)
+    expected = (grid._incidence_matrix() @ np.asarray(grid.get("solute_flux"))).reshape(SHAPE)
     np.testing.assert_allclose(grid.get("divergence"), expected, atol=1e-14)

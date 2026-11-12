@@ -1,0 +1,56 @@
+"""
+One seedling in a soil column under a dry air (a constant water potential): the plant and the soil exchange at each
+scene step until the water potentials stop changing (a lagged fixed point), then the plots.
+
+    python one_plant.py [output folder]
+"""
+import os
+import sys
+
+from openalea.metafspm import Planting, planting, Scene, SceneRecorder
+
+from models import SCENE_TRANSLATOR, SeedlingWater, Soil, largest_change
+import plotting
+
+
+def scene(folder=None, tolerance=1e-6, soil_scenario=None):
+    table = planting([Planting(x=0.1, y=0.1)], SeedlingWater, x_range=0.2, y_range=0.2)   # a 0.2 m x 0.2 m soil column
+    stop = largest_change(tolerance)
+    built = Scene(table, environment=[Soil], environment_scenarios=[soil_scenario or {}],
+                  translator=SCENE_TRANSLATOR, time_step="1 h", stop_when=stop,
+                  recorder=SceneRecorder(folder, segment_plants=["p0"], segment_period="1 h") if folder else None)
+    return built, stop
+
+
+def plots(built, folder, row=None):
+    """The figures; *row*: the side views show only that planting row (for a stand)."""
+    os.makedirs(folder, exist_ok=True)
+    plants = [population.data_structure for population in built.populations]
+    soil = built.model(Soil).grid
+    plotting.plant_segments(plants, os.path.join(folder, "plant_segments.png"), row=row)
+    plotting.plant_segments(plants, os.path.join(folder, "plant_segments_soil.png"), row=row, soil=soil)   # ΔΨ
+    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy.png"), row=row)
+    plotting.plant_anatomy(plants[0], os.path.join(folder, "plant_anatomy_soil.png"), row=row, soil=soil)
+    plotting.anatomy_types(plants[0], os.path.join(folder, "anatomy_types.png"))
+    plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice.png"), row=row)
+    plotting.soil_slice(soil, plants, os.path.join(folder, "soil_slice_anomaly.png"), row=row, anomaly=True)
+    plotting.top_view(soil, plants, os.path.join(folder, "top_view.png"))
+    plotting.upscaling_series(plants[0], os.path.join(folder, "upscaling.png"), row=row)   # Compartment -> ... -> Plant
+
+
+def summary(built, stop):
+    plant = built.populations[0].data_structure
+    soil = built.model(Soil).grid
+    print(f"converged in {built.step_count} steps; largest change of Ψ per step (MPa): "
+          + ", ".join(f"{change:.1e}" for change in stop.history))
+    print(f"transpiration {plant.get('evaporation').sum():.4f} mm3 s-1, root uptake "
+          f"{plant.get('root_uptake').sum():.4f} mm3 s-1, soil evaporation {soil.get('evaporation').sum():.4f} "
+          f"mm3 s-1; leaf Ψ down to {plant.get('water_potential').min():.2f} MPa")
+
+
+if __name__ == "__main__":
+    folder = sys.argv[1] if len(sys.argv) > 1 else "outputs/one_plant"
+    built, stop = scene(folder=folder)
+    built.simulate(100)
+    summary(built, stop)
+    plots(built, folder)

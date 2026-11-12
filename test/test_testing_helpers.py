@@ -1,12 +1,12 @@
-"""metafspm.testing's comparison helpers and metafspm.corrections."""
+"""metafspm.testing.comparison and metafspm.testing.corrections."""
 import subprocess
 
 import numpy as np
 import pytest
 
-from openalea.metafspm.corrections import Corrections
-from openalea.metafspm.testing import (array_differences, assert_arrays_equal, assert_texts_equal, run_executables,
-                                       text_differences, worktree)
+from openalea.metafspm.testing.comparison import (array_differences, assert_arrays_equal, assert_texts_equal,
+                                                  run_executables, text_differences, worktree)
+from openalea.metafspm.testing.corrections import Corrections
 
 
 def test_texts_and_arrays():
@@ -17,7 +17,7 @@ def test_texts_and_arrays():
     assert array_differences([1., np.nan, 3.], [1., np.nan, 3.]) == {}
     found = array_differences([1., 2., 3.], [1., 2.5, 3.1])
     assert found["count"] == 2 and found["first"] == (1,) and found["largest"] == pytest.approx(0.5)
-    assert array_differences([1., 2.], [1., 2. + 1e-9], rtol=1e-6) == {}
+    assert array_differences([1., 2.], [1., 2. + 1e-9], relative_tolerance=1e-6) == {}
     with pytest.raises(AssertionError, match="1 entries differ"):
         assert_arrays_equal(np.arange(3), [0, 1, 5])
 
@@ -58,7 +58,7 @@ def test_run_in_env():
     import os
     import shutil
     import sys
-    from openalea.metafspm.testing import run_in_env
+    from openalea.metafspm.testing.comparison import run_in_env
     import json
     import subprocess
     conda = os.environ.get("CONDA_EXE", "conda")

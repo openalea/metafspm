@@ -1,5 +1,5 @@
 """The plain forms of devplan_porting §16: named step outputs (a dict), declarations documented by keywords,
-parameter_value, cached, run_stage, ds.structure, planting; and display.draw."""
+parameter_value, cached, run_stage, data_structure.structure, planting; and display.draw."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,13 +15,13 @@ from openalea.metafspm.solve.decorator import postsegmentation, rate
 
 @dataclass
 class Named(FunctionalComponent):
-    length: float = input_variable(unit="m", description="A length", by="Test", initialize=2., location="node")
-    double: float = state_variable(unit="m", description="Twice the length", initialize=0., location="node",
-                                   state_variable_type="extensive")
-    square: float = state_variable(unit="m2", description="The length squared", initialize=0., location="node",
-                                   state_variable_type="extensive")
-    later: float = state_variable(unit="m", description="Written at postsegmentation", initialize=0.,
-                                  location="node", state_variable_type="extensive")
+    length: float = input_variable(unit="m", description="A length", by="Test", default=2., location="node")
+    double: float = state_variable(unit="m", description="Twice the length", default=0., location="node",
+                                   kind="extensive")
+    square: float = state_variable(unit="m2", description="The length squared", default=0., location="node",
+                                   kind="extensive")
+    later: float = state_variable(unit="m", description="Written at postsegmentation", default=0.,
+                                  location="node", kind="extensive")
     factor: float = parameter(unit="adim", description="A factor", by="Test", default=3.)
 
     @rate
@@ -35,9 +35,9 @@ class Named(FunctionalComponent):
 
 @dataclass
 class Scalar(FunctionalComponent):
-    length: float = input_variable(unit="m", description="A length", by="Test", initialize=2., location="node")
-    double: float = state_variable(unit="m", description="Twice", initialize=0., location="node",
-                                   state_variable_type="extensive")
+    length: float = input_variable(unit="m", description="A length", by="Test", default=2., location="node")
+    double: float = state_variable(unit="m", description="Twice", default=0., location="node",
+                                   kind="extensive")
 
     @rate(vectorized=False)
     def _per_element(self, length) -> dict:
@@ -46,7 +46,7 @@ class Scalar(FunctionalComponent):
 
 @dataclass
 class Wrong(FunctionalComponent):
-    length: float = input_variable(unit="m", description="A length", by="Test", initialize=2., location="node")
+    length: float = input_variable(unit="m", description="A length", by="Test", default=2., location="node")
 
     @rate
     def _wrong(self, length) -> dict:
@@ -54,19 +54,19 @@ class Wrong(FunctionalComponent):
 
 
 def graph():
-    g, _ = generate_simple_mpg_seedling()
-    g.populate_graph(g.scales.SubOrgan)
-    g.convert_properties_to_arraydict()
-    return MPGDataStructure(g, from_scale=g.scales.SubOrgan)
+    mtg, _ = generate_simple_mpg_seedling()
+    mtg.populate_graph(mtg.scales.SubOrgan)
+    mtg.convert_properties_to_arraydict()
+    return MPGDataStructure(mtg, from_scale=mtg.scales.SubOrgan)
 
 
 def test_named_outputs():
-    ds = graph()
-    component = Named(data_structure=ds, time_step=1.)
+    data_structure = graph()
+    component = Named(data_structure=data_structure, time_step=1.)
     component()
-    np.testing.assert_array_equal(ds.get("double"), 4.)
-    np.testing.assert_array_equal(ds.get("square"), 4.)
-    assert not ds.has("measures")                      # the method's name only names the step
+    np.testing.assert_array_equal(data_structure.get("double"), 4.)
+    np.testing.assert_array_equal(data_structure.get("square"), 4.)
+    assert not data_structure.has("measures")                      # the method's name only names the step
     scalar_ds = graph()
     Scalar(data_structure=scalar_ds, time_step=1.)()
     np.testing.assert_array_equal(scalar_ds.get("double"), 4.)
@@ -80,29 +80,29 @@ def test_documentation_by_keywords():
 
 
 def test_parameter_value_cached_and_run_stage():
-    ds = graph()
-    component = Named(data_structure=ds, time_step=1.)
+    data_structure = graph()
+    component = Named(data_structure=data_structure, time_step=1.)
     assert component.parameter_value("factor") == 3.
     builds = []
     assert component.cached("thing", lambda: builds.append(1) or 7) == 7
     assert component.cached("thing", lambda: builds.append(1) or 8) == 7 and len(builds) == 1
     assert component.cached("thing", lambda: 9, key="another") == 9
-    assert ds.structure is ds._mtg                                  # the MTG, unsynchronised
+    assert data_structure.structure is data_structure._mtg                                  # the MTG, unsynchronised
     component.run_stage("postsegmentation")
-    np.testing.assert_array_equal(ds.get("later"), 6.)
-    np.testing.assert_array_equal(ds.get("double"), 0.)            # the rate step did not run
+    np.testing.assert_array_equal(data_structure.get("later"), 6.)
+    np.testing.assert_array_equal(data_structure.get("double"), 0.)            # the rate step did not run
     with pytest.raises(ValueError, match="no schedule row"):
         component.run_stage("nothing")
 
 
 def test_planting():
-    table = planting([Planting(0., 0., -0.02, 10.), Planting(0.3, 0.1)], model=object, parameters=dict(a=1),
-                     plant_parameters=[dict(b=1), dict(b=2)])
-    assert table["z"].tolist() == [-0.02, 0.] and table["rotation"].tolist() == [10., 0.]
-    assert [row["parameters"] for row in table["scenario"]] == [dict(a=1, b=1), dict(a=1, b=2)]
-    assert table.attrs["xrange"] == pytest.approx(0.3) and table.attrs["yrange"] == pytest.approx(0.1)
+    table = planting([Planting(0., 0., 0.02, 10.), Planting(0.3, 0.1)], model=object, scenario=dict(a=1),
+                     plant_scenarios=[dict(b=1), dict(b=2)])
+    assert table["depth"].tolist() == [0.02, 0.] and table["rotation"].tolist() == [10., 0.]
+    assert table["scenario"].tolist() == [dict(a=1, b=1), dict(a=1, b=2)] and table["plant"].tolist() == ["p0", "p1"]
+    assert table.attrs["x_range"] == pytest.approx(0.3) and table.attrs["y_range"] == pytest.approx(0.1)
     with pytest.raises(ValueError):
-        planting([Planting()], model=object, plant_parameters=[{}, {}])
+        planting([Planting()], model=object, plant_scenarios=[{}, {}])
 
 
 def test_draw():
@@ -120,6 +120,6 @@ def test_draw():
 
 def test_declarations_and_schedule():
     table = Named.declarations()
-    assert table.set_index("name").loc["length", ["kind", "unit", "by"]].tolist() == ["input", "m", "Test"]
+    assert table.set_index("name").loc["length", ["role", "unit", "by"]].tolist() == ["input_variable", "m", "Test"]
     assert table.set_index("name").loc["factor", "default"] == 3.
     assert Named.schedule() == [(("postsegmentation",), ["_later"]), (("rate",), ["_measures"])]   # as they run
