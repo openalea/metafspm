@@ -368,7 +368,7 @@ class SoilDiffusion(FunctionalComponent):
   class archetype no group has any more is kept while its family (its template, exact archetype values and parameters) is in
   use, so a growing plant's archetypes saturate; an exact archetype no group has any more is released at the next solve (its
   arrays freed, evaluated again if a group comes back to it). The plants of one population share their archetypes when
-  those parameters are the same (plants differing in another component's only, their root draws say, share them). The missing archetypes are evaluated in batches of at most `Compute.archetype_batch`
+  those parameters are the same (plants differing in another component's only, their root draws say, share them); the populations share them too, at any process count ([Populations in processes](#populations-in-processes-computeprocesses)). The missing archetypes are evaluated in batches of at most `Compute.archetype_batch`
   interior cells (the Scene's Compute, `Compute.current()`; the memory freed between batches), every plant
   parameters' archetypes in the same batches, in one library population kept on the reduction (one plant per plant
   parameters of the batch; each batch's groups replacing the former's, its components reset to their built state
