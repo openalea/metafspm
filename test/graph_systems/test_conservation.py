@@ -137,13 +137,13 @@ def test_conservation_csv_max_change_and_component_timing(tmp_path):
                   recorder=SceneRecorder(str(tmp_path / "out"), tables=tables))
     assert "SoilModel_1" in scene.data_structures()
     scene.simulate(3)
-    conservation = pd.read_csv(tmp_path / "out" / "conservation.csv")
+    conservation = pd.read_csv(tmp_path / "out" / "summaries" / "conservation.csv")
     assert list(conservation["time"]) == [SCENE_DT, 2 * SCENE_DT, 3 * SCENE_DT]
     assert set(conservation["component"]) == {"Soil"} and set(conservation["model"]) == {"SoilModel_1"}
     assert np.all(np.abs(conservation["residual"]) < 1e-9 * conservation["outflow"])
-    changes = pd.read_csv(tmp_path / "out" / "changes.csv")
+    changes = pd.read_csv(tmp_path / "out" / "summaries" / "hand_declared" / "changes.csv")
     assert np.isnan(changes["struct_mass_max_change"].iloc[0]) and (changes["struct_mass_max_change"].iloc[1:] > 0).all()
-    soil = pd.read_csv(tmp_path / "out" / "soil.csv")
+    soil = pd.read_csv(tmp_path / "out" / "summaries" / "hand_declared" / "soil.csv")
     assert (soil["solute_max_change"].iloc[1:] > 0).all()
     with open(tmp_path / "out" / "run.json") as file:
         timing = json.load(file)["timing"]

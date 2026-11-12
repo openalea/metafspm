@@ -163,9 +163,9 @@ its steps, and the variables each reads and writes.
 
 The `SceneRecorder` writes the run's outputs into one folder, as it runs:
 
-- **summaries**: every component's state variables per plant and for the soil, after every step (the extensive ones
+- **summaries** (in `summaries/Plant/` and `summaries/Soil/`): every component's state variables per plant and for the soil, after every step (the extensive ones
   summed, the intensive ones averaged by their declared weight);
-- **tables** declared in a few words: use case 1's leaves table is the blades' green area, assimilation and
+- **tables** declared in a few words (in `summaries/hand_declared/`): use case 1's leaves table is the blades' green area, assimilation and
   transpiration summed, their light and stomatal conductance averaged by the green area:
 
   ```python
@@ -175,7 +175,7 @@ The `SceneRecorder` writes the run's outputs into one folder, as it runs:
                    min=["leaf_water_potential"])
   ```
 - **the water balances** of the solves that declare their quantity conserved (MECHA's plant water, the soil's water),
-  in `conservation.csv`: inflow, outflow, change and residual per step;
+  in `summaries/conservation.csv`: inflow, outflow, change and residual per step;
 - **frames**: the whole scene in 3D, with its variables, as encoding3d files, every `frame_period`;
 - **checkpoints**: the whole state, every `checkpoint_period`, from which `Scene.load_checkpoint` resumes the run
   bit for bit;
@@ -200,17 +200,17 @@ nothing: everything is in its folder, after every hour:
 
 | file | what it holds |
 |---|---|
-| `Plant/WheatPlant/summaries.csv`, `Soil/RichardsSoilModel/summaries.csv` | every component's variables, per plant (column `plant`: `p0`, `p1`, ...) and for the soil, per hour (column `time`) |
-| `leaves.csv`, `roots.csv` | the blades' gas exchange; the roots' water potential and uptake |
-| `plant_water.csv`, `leaf_water.csv`, `soil_water.csv` | the water exchanged between the plants and the soil, and the potentials' hourly change (the lag's check) |
-| `conservation.csv` | the plant's and the soil's water balances (their residuals are round-off) |
+| `summaries/Plant/WheatPlant/summaries.csv`, `summaries/Soil/RichardsSoilModel/summaries.csv` | every component's variables, per plant (column `plant`: `p0`, `p1`, ...) and for the soil, per hour (column `time`) |
+| `summaries/hand_declared/leaves.csv`, `roots.csv` | the blades' gas exchange; the roots' water potential and uptake |
+| `summaries/hand_declared/plant_water.csv`, `leaf_water.csv`, `soil_water.csv` | the water exchanged between the plants and the soil, and the potentials' hourly change (the lag's check) |
+| `summaries/conservation.csv` | the plant's and the soil's water balances (their residuals are round-off) |
 | `run.json` | the run's progress, then the time each model and component took |
 | `frames/`, then `frames.fspm.zip` | a frame every 12 hours; at the end, the frames packed into one archive |
 | `checkpoints/` | the last day's checkpoint |
 
 ## Looking at the results
 
-The tables are CSV files, readable while the run goes on: `pandas.read_csv("outputs/three_days/leaves.csv")`, or a
+The tables are CSV files, readable while the run goes on: `pandas.read_csv("outputs/three_days/summaries/hand_declared/leaves.csv")`, or a
 spreadsheet.
 
 The frames are **encoding3d** files: each holds the whole scene at one time, every element's variables, the soil and

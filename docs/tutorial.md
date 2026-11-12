@@ -105,14 +105,15 @@ outputs/dry/
   run.json                           status, start and end, wall time per model, provenance
   scenario.json                      the planting, each model's scenario, the forcings, the recorder's settings
   forcings/air_water_potential.csv   the forcing, as given
-  Plant/SeedlingWater/summaries.csv  one row per plant and step: the plant's state variables, summed or averaged
-  Soil/Soil/summaries.csv            one row per step: the soil grid's state variables
+  summaries/Plant/SeedlingWater/summaries.csv
+                                     one row per plant and step: the plant's state variables, summed or averaged
+  summaries/Soil/Soil/summaries.csv  one row per step: the soil grid's state variables
   frames/frame_000000.glb ...        the whole scene every 6 hours (encoding3d), and their index scene.fspm.json
   checkpoints/step_000048/           the last checkpoint, to restart from
 ```
 
 Plant summaries sum the extensive variables over each plant's elements (the transpiration, `evaporation`) and
-average the others (a water potential). An environment model's summaries go to `Soil/` or `Atmosphere/`, given by
+average the others (a water potential). An environment model's summaries go to `summaries/Soil/` or `summaries/Atmosphere/`, given by
 its `compartment` attribute. Every table has its time column, `time`, in s.
 
 **Several plants, several cores.** A scene of many plants can step its populations in worker processes, the scene's
@@ -142,8 +143,8 @@ from openalea import encoding3d
 
 status = json.load(open("outputs/dry/run.json"))           # status["status"] == "finished", status["timing"]:
                                                            # per model and per component ("SeedlingWater.PlantWaterTransport")
-plant = pd.read_csv("outputs/dry/Plant/SeedlingWater/summaries.csv")
-soil = pd.read_csv("outputs/dry/Soil/Soil/summaries.csv")
+plant = pd.read_csv("outputs/dry/summaries/Plant/SeedlingWater/summaries.csv")
+soil = pd.read_csv("outputs/dry/summaries/Soil/Soil/summaries.csv")
 frames = encoding3d.read_index("outputs/dry/frames/scene.fspm.json")["frames"]
 last = encoding3d.read(frames[-1]["path"])                     # every variable of the plant and the soil, at 48 h
 ```

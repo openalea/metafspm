@@ -26,18 +26,23 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
                                       environment models and their scenarios, forcings, the run configuration
                                       (Compute), the recorder's settings
     forcings/<name>.csv               the forcings given as tables
-    Plant/<Population>/summaries.csv  one row per plant and recorded step: time, plant, the float state variables of
+    summaries/                        the tables (SUMMARIES_FOLDER), each named by its path in it without .csv:
+    summaries/Plant/<Population>/summaries.csv
+                                      one row per plant and recorded step: time, plant, the float state variables of
                                       every component on its DataStructure or a view of it (each over the entities of
                                       the components declaring it; extensive ones summed, intensive ones averaged by
                                       their declared weight, Plant ones as is; descriptors and edges left out)
-    Plant/<Population>/segments.csv   the node state variables of the segment_plants, every segment_period
-    Soil/<Model>/summaries.csv        one row per recorded step: time, the grid's float state variables (extensive
-    Atmosphere/<Model>/summaries.csv  ones summed, the others averaged by their weight or the cells' volumes), by the
+    summaries/Plant/<Population>/segments.csv
+                                      the node state variables of the segment_plants, every segment_period
+    summaries/Soil/<Model>/summaries.csv, summaries/Atmosphere/<Model>/summaries.csv
+                                      one row per recorded step: time, the grid's float state variables (extensive
+                                      ones summed, the others averaged by their weight or the cells' volumes), by the
                                       environment model's compartment
-    <name>.csv                        the tables given as tables={name: function(scene) -> a row (dict), a
+    summaries/hand_declared/<name>.csv
+                                      the tables given as tables={name: function(scene) -> a row (dict), a
                                       DataFrame, or None for no row}, or declared: Summary(location, where, sum, mean,
                                       min, max, max_change, per)
-    conservation.csv                  the balances of the quantities the graph systems conserve
+    summaries/conservation.csv        the balances of the quantities the graph systems conserve
                                       (graph_system(conserved=...)), at the summaries' period: time, model,
                                       component, system, quantity, inflow, outflow, change, residual (change - inflow
                                       + outflow, since the last row), unit
@@ -63,9 +68,10 @@ scene's steps, or "step" (every step); an output is written when the scene's tim
 
 Every output is switched on or off by its own argument (summaries=False, frame_period=None, ...). The initial state
 is recorded when the run begins, then every period, and the last state when it finishes (Scene.stop). Without an
-output folder, the summaries and tables are kept in memory: recorder.table(name) gives any of them back, e.g.
-table("Plant/RootModel/summaries") or a table's name. After a restore (Scene.load_checkpoint), every table is cut
-back to the restored time and appended to from there.
+output folder, the summaries and tables are kept in memory: recorder.table(name) gives any of them back by its
+path in summaries/, e.g. table("Plant/RootModel/summaries"), table("conservation"), table("hand_declared/leaves")
+(or a tables= name alone: table("leaves")). After a restore (Scene.load_checkpoint), every table is cut back to the
+restored time and appended to from there.
 """
 import json
 import os
@@ -85,6 +91,8 @@ from openalea.metafspm.coupling.declaration import EXTENSIVE_KINDS, INTENSIVE_KI
 from openalea.metafspm.scene.provenance import frame_writer, provenance
 
 COMPARTMENTS = ("Plant", "Soil", "Atmosphere")
+SUMMARIES_FOLDER = "summaries"                         # the tables' folder in the output folder
+HAND_DECLARED = "hand_declared"                       # the tables= tables' folder in it
 _PACKAGE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # openalea.metafspm's folder
 _NOT_SUMMARISED = ("edge", "face", "Connection")      # the relations' variables (flows, conductances between nodes)
 CELL_VOLUME = "<cell volume>"                         # the weight of a grid's intensive variables: its cells' volumes
@@ -700,7 +708,7 @@ class SceneRecorder:
                 row = function(scene)
                 if row is not None:
                     frame = pd.DataFrame([row]) if isinstance(row, dict) else pd.DataFrame(row)
-                    self._append(name, frame)
+                    self._append(f"{HAND_DECLARED}/{name}", frame)
 
     def _due(self, output: str, iteration: int) -> bool:
         """Whether *output* was not written at *iteration* yet (and note it is now)."""
@@ -935,7 +943,7 @@ class SceneRecorder:
         if self.folder is None:
             self._memory.setdefault(name, []).append(frame)
             return
-        path = os.path.join(self.folder, name + ".csv")
+        path = self._table_path(name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if name not in self._columns and self.resume and os.path.exists(path):
             self._columns[name] = list(pd.read_csv(path, nrows=0).columns)
@@ -945,26 +953,32 @@ class SceneRecorder:
         else:
             frame.reindex(columns=self._columns[name]).to_csv(path, mode="a", header=False, index=False)
 
+    def _table_path(self, name: str) -> str:
+        """The file of the table *name* (its path in the summaries folder, without .csv)."""
+        return os.path.join(self.folder, SUMMARIES_FOLDER, name + ".csv")
+
     def table(self, name: str) -> pd.DataFrame:
-        """A recorded table (a tables= name, or "Plant/<Model>/summaries" ...), from its file or from memory."""
+        """A recorded table ("Plant/<Model>/summaries", "conservation", "hand_declared/<name>" or a tables= name
+        alone), from its file or from memory."""
+        if name in self.tables:
+            name = f"{HAND_DECLARED}/{name}"
         if self.folder is None:
             if name not in self._memory:
                 raise KeyError(f"no table '{name}' recorded (recorded: {sorted(self._memory)})")
             return pd.concat(self._memory[name], ignore_index=True)
-        path = os.path.join(self.folder, name + ".csv")
+        path = self._table_path(name)
         if not os.path.exists(path):
             raise KeyError(f"no table '{name}' recorded ({path} missing)")
         return pd.read_csv(path)
 
     def table_names(self) -> list:
-        """The names of the tables recorded so far."""
+        """The names of the tables recorded so far (their paths in the summaries folder, without .csv)."""
         if self.folder is None:
             return sorted(self._memory)
+        summaries_folder = os.path.join(self.folder, SUMMARIES_FOLDER)
         found = []
-        for folder, _, files in os.walk(self.folder):
-            relative = os.path.relpath(folder, self.folder)
-            if relative.split(os.sep)[0] in ("frames", "checkpoints", "forcings"):
-                continue
+        for folder, _, files in os.walk(summaries_folder):
+            relative = os.path.relpath(folder, summaries_folder)
             found += [os.path.normpath(os.path.join(relative, file[:-4])).replace(os.sep, "/")
                       for file in files if file.endswith(".csv")]
         return sorted(found)
@@ -1174,7 +1188,7 @@ class SceneRecorder:
             self._memory = {}
             return
         for name in self.table_names():
-            path = os.path.join(self.folder, name + ".csv")
+            path = self._table_path(name)
             table = pd.read_csv(path)
             if "time" in table.columns:
                 kept = table[table["time"] <= scene.time + 1e-9 * max(1., abs(scene.time))]

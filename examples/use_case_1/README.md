@@ -199,20 +199,22 @@ Every model reads the weather over its step (the forcings' means over the hour, 
 not depend on the time step through the forcings. The run prints nothing: what it gives is in its folder, after
 every hour (the tables can be read while it runs):
 
-- `Plant/WheatPlant/summaries.csv` and `Soil/RichardsSoilModel/summaries.csv`: every component's state variables per
-  plant (those of the components on the SubOrgans, Adel's, ArchiSimple's, the gas exchange's, the light's, too: the
-  lengths summed, the potentials, conductances and light averaged by their declared weights) and for the soil;
-- `leaves.csv` (`models.LEAVES`): the blades' green area, PARa, An, gs and leaf water potential (over the blade
-  elements of some green area, An per area times the area summed, the means weighted by the green area);
-- `roots.csv` (`models.ROOTS`): MECHA's psi averaged over the root sections by its declared weight, the liquid volume
-  (the soil nodes and the air spaces have none), and their uptake;
-- `plant_water.csv`, `leaf_water.csv`, `soil_water.csv` (`models.WATER_TABLES`, decision U-6: the plant and the soil
-  exchange once per step): the plant's uptake and transpiration, what the soil gave the roots, the largest changes
-  of the plant's and the soil's water potentials since the hour before (`Summary(max_change=)`, from the values
-  before the step the Scene keeps: `data_structure.previous`);
-- `conservation.csv`: the plant's and the soil's water balances, each conserved quantity's inflow, outflow, change and
-  residual per step (their solves' declared conservation: MECHA's `PLANT_WATER`, the soil's `WATER`; the residuals
-  are round-off);
+- `summaries/Plant/WheatPlant/summaries.csv` and `summaries/Soil/RichardsSoilModel/summaries.csv`: every
+  component's state variables per plant (those of the components on the SubOrgans, Adel's, ArchiSimple's, the gas
+  exchange's, the light's, too: the lengths summed, the potentials, conductances and light averaged by their
+  declared weights) and for the soil;
+- `summaries/hand_declared/`, the tables declared in `models.TABLES`:
+  - `leaves.csv` (`models.LEAVES`): the blades' green area, PARa, An, gs and leaf water potential (over the blade
+    elements of some green area, An per area times the area summed, the means weighted by the green area);
+  - `roots.csv` (`models.ROOTS`): MECHA's psi averaged over the root sections by its declared weight, the liquid
+    volume (the soil nodes and the air spaces have none), and their uptake;
+  - `plant_water.csv`, `leaf_water.csv`, `soil_water.csv` (`models.WATER_TABLES`, decision U-6: the plant and the
+    soil exchange once per step): the plant's uptake and transpiration, what the soil gave the roots, the largest
+    changes of the plant's and the soil's water potentials since the hour before (`Summary(max_change=)`, from the
+    values before the step the Scene keeps: `data_structure.previous`);
+- `summaries/conservation.csv`: the plant's and the soil's water balances, each conserved quantity's inflow, outflow,
+  change and residual per step (their solves' declared conservation: MECHA's `PLANT_WATER`, the soil's `WATER`; the
+  residuals are round-off);
 - `run.json`: the run's progress after every hour, then its end, with the wall time per model and per component
   (`timing`), the calls per component, the threads chosen and each kernel's and solver's time and threads
   (`compute`) and the frames' archive;

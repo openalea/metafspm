@@ -149,7 +149,7 @@ def test_the_recorder_appends_after_a_restore(tmp_path):
     scene.checkpoint(str(tmp_path / "c"))
     restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(str(tmp_path / "out")))
     restored.run()
-    summaries = pd.read_csv(tmp_path / "out" / "Plant" / "RootPopulation" / "summaries.csv")
+    summaries = pd.read_csv(tmp_path / "out" / "summaries" / "Plant" / "RootPopulation" / "summaries.csv")
     assert sorted(set(summaries["time"])) == [0., DT, 2 * DT] and len(summaries) == 6
 
 
@@ -163,7 +163,7 @@ def test_a_restore_cuts_the_outputs_of_the_interrupted_run_back(tmp_path):
     restored = Scene.restore(str(tmp_path / "c"), **_scene_arguments(out))
     restored.simulate(2)
     for name in ("Plant/RootPopulation/summaries", "Plant/RootPopulation/segments", "Soil/ExternalSolverSoil/summaries"):
-        table = pd.read_csv(os.path.join(out, name + ".csv"))
+        table = pd.read_csv(os.path.join(out, "summaries", name + ".csv"))
         once = table.drop_duplicates(subset=[c for c in ("time", "plant", "vid") if c in table.columns])
         assert len(once) == len(table) and sorted(set(table["time"])) == [0., DT, 2 * DT, 3 * DT], name
     with open(os.path.join(out, "run.json")) as file:
@@ -201,7 +201,7 @@ def test_a_packed_run_resumes_from_its_one_checkpoint(tmp_path):
     assert validate_file(archive).ok
     straight = tmp_path / "straight"
     _scene(str(straight), **recorder).simulate(6)
-    summaries = "Plant/RootPopulation/summaries.csv"
+    summaries = "summaries/Plant/RootPopulation/summaries.csv"
     pd.testing.assert_frame_equal(pd.read_csv(out / summaries), pd.read_csv(straight / summaries))
 
 
@@ -274,7 +274,7 @@ def test_vector_variables_through_steps_growth_exchanges_and_outputs(tmp_path):
     assert (grid.get("pools").reshape(-1, POOLS) > 0).any(axis=0).all()
     frame = plants.to_dataframe(names=["compounds"], location="node")
     assert list(frame.columns) == ["compounds_0", "compounds_1", "compounds_2"]
-    summaries = pd.read_csv(tmp_path / "out" / "Plant" / "VectorPlants" / "summaries.csv")
+    summaries = pd.read_csv(tmp_path / "out" / "summaries" / "Plant" / "VectorPlants" / "summaries.csv")
     assert {"compounds_0", "compounds_2"} <= set(summaries.columns)
     grid.checkpoint(str(tmp_path / "grid"))
     np.testing.assert_array_equal(ArrayDataStructure.restore(str(tmp_path / "grid")).get("pools"), grid.get("pools"))

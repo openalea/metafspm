@@ -781,7 +781,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   (`population.data_structure`, `population.instance`).
 - **Several populations of one model (intercropping).** `planting(plants, [Roots] * 4, {"deep": {...}, "shallow":
   {...}}, population=["deep", "shallow", "deep", "shallow"])`: two populations of one model, each its own MPG,
-  model instance and outputs (`Plant/deep/summaries.csv`); a scenario may be given per population name. In the
+  model instance and outputs (`summaries/Plant/deep/summaries.csv`); a scenario may be given per population name. In the
   scene a component is named `"<population>.<Component>"` (an environment model's `"<EnvironmentModel>.<Component>"`):
   a translator link naming a class reaches every population's component of that class (each exchanging with the
   soil or the light), one naming `"deep.RootGrowth"` that one only; two populations' components are linked only by
@@ -871,17 +871,19 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
     a component's calls and its steps run
     together with others, `Component.wall_time()`), its provenance and the forcings applied (below);
   - `scenario.json`: the planting, the scenarios, the environment models, the forcings (tables in `forcings/`);
-  - `Plant/<Model>/summaries.csv`: one row per plant and step, the float state variables of every component on the
+  - `summaries/`, the tables (`recorder.table(name)` reads one by its path there without `.csv`:
+    `"Plant/<Model>/summaries"`, `"conservation"`, `"hand_declared/<name>"` or a `tables=` name alone):
+  - `summaries/Plant/<Model>/summaries.csv`: one row per plant and step, the float state variables of every component on the
     plants' DataStructure **and on its views** (a structural component's SubOrgans, Adel's or ArchiSimple's
     entities: each variable over the entities of the components declaring it), at every location (nodes, SubOrgans,
     Organs, ...; a light model's union of the plants too): extensive ones summed, intensive ones their mean
     weighted by their declared weight (`state_variable(kind="intensive", weight="green_area")`, a variable at the
     same location: a volume, a mass, an area), plain without one (a warning lists them once), Plant ones as they are;
     descriptors, the relations' variables (edges) and the entities without a value (NaN) left out;
-  - `Plant/<Model>/segments.csv`: the `segment_plants`' nodes every `segment_period` steps;
-  - `Soil/<Model>/summaries.csv` and `Atmosphere/<Model>/summaries.csv`: each environment model's grid, by its
+  - `summaries/Plant/<Model>/segments.csv`: the `segment_plants`' nodes every `segment_period` steps;
+  - `summaries/Soil/<Model>/summaries.csv` and `summaries/Atmosphere/<Model>/summaries.csv`: each environment model's grid, by its
     `compartment` attribute (intensive variables weighted by their declared weight, else by the cells' volumes);
-  - your own tables, `tables={name: function(scene) -> row}`, as `<name>.csv`, or declared:
+  - your own tables, `tables={name: function(scene) -> row}`, as `summaries/hand_declared/<name>.csv`, or declared:
     `Summary(location, where={...}, sum=[...] or {name: factor}, mean=[...] or {name: weight}, min=[...], max=[...],
     per="scene" | "plant")`, e.g. the leaves' gas exchange `Summary("SubOrgan", where={"label": "LeafElement",
     "green_area": ">0"}, sum={"An": "green_area", "transpiration": None}, mean={"gs": "green_area"})`: the
@@ -892,7 +894,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
     keeps before each step, `data_structure.previous(name)`, aligned by id; `scene.keep_previous(data_structure, *names)` keeps others);
     `population=` a population's model name, or an environment model's DataStructure (its `scene.data_structures()`
     id: a soil grid's cells);
-  - `conservation.csv`: the balances of the quantities the graph systems conserve (`graph_system(conserved=
+  - `summaries/conservation.csv`: the balances of the quantities the graph systems conserve (`graph_system(conserved=
     {"water": Conservation(amount=("water_content", "volume"), inflow="surface_inflow", outflow=("drainage",
     "plant_uptake"), unit="m3")})`): per step (the summaries' period), each one's inflow and outflow (their rates at
     the end of each accepted sub-step times its length, over the solved entities), the change of what is held and

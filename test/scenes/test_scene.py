@@ -167,16 +167,16 @@ def test_plants_are_frozen_until_their_emergence():
 def test_the_recorder_writes_plant_summaries_and_selected_plants(tmp_path):
     scene = _scene(recorder=SceneRecorder(str(tmp_path), segment_plants=["p0"], segment_period="2 h"))
     scene.simulate(3)
-    summaries = pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "summaries.csv")
+    summaries = pd.read_csv(tmp_path / "summaries" / "Plant" / "RootPopulation" / "summaries.csv")
     assert len(summaries) == 4 * 2 and set(summaries["plant"]) == {"p0", "p2"}          # the initial state too
     assert sorted(set(summaries["time"])) == [0., DT, 2 * DT, 3 * DT]
     np.testing.assert_allclose(summaries[summaries["time"] == 3 * DT]["exudation"].sum(),
                                scene.populations[0].data_structure.get("exudation").sum())
-    segments = pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "segments.csv")
+    segments = pd.read_csv(tmp_path / "summaries" / "Plant" / "RootPopulation" / "segments.csv")
     assert set(segments["plant"]) == {"p0"} and set(segments["time"]) == {0., 2 * DT, 3 * DT}     # and the last
-    assert not (tmp_path / "Plant" / "Seedlings" / "segments.csv").exists()
-    assert len(pd.read_csv(tmp_path / "Plant" / "Seedlings" / "summaries.csv")) == 4 * 2
-    soil = pd.read_csv(tmp_path / "Soil" / "SceneSoil" / "summaries.csv")                 # the environment too
+    assert not (tmp_path / "summaries" / "Plant" / "Seedlings" / "segments.csv").exists()
+    assert len(pd.read_csv(tmp_path / "summaries" / "Plant" / "Seedlings" / "summaries.csv")) == 4 * 2
+    soil = pd.read_csv(tmp_path / "summaries" / "Soil" / "SceneSoil" / "summaries.csv")                 # the environment too
     assert list(soil.columns) == ["time", "soil_nitrate"] and len(soil) == 4
     np.testing.assert_allclose(soil["soil_nitrate"].iloc[-1], scene.environment[0].grid.get("soil_nitrate").mean())
 
@@ -285,5 +285,5 @@ def test_an_intercropped_scene_resumes_from_its_checkpoint(tmp_path):
         np.testing.assert_allclose(resumed.population(name).data_structure.get("exudation"),
                                    scene.population(name).data_structure.get("exudation"))
     scene.finish()
-    assert (tmp_path / "out" / "Plant" / "thin" / "summaries.csv").exists()
-    assert (tmp_path / "out" / "Plant" / "thick" / "summaries.csv").exists()
+    assert (tmp_path / "out" / "summaries" / "Plant" / "thin" / "summaries.csv").exists()
+    assert (tmp_path / "out" / "summaries" / "Plant" / "thick" / "summaries.csv").exists()

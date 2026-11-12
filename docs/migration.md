@@ -141,13 +141,14 @@ class GrassBRIDGES(CompositeModel):
 ## 5. Outputs
 
 - **The SceneRecorder replaces fspm-utility's Logger** (`Scene(..., recorder=SceneRecorder(folder, ...))`):
-  - `summaries.csv` (sums and means per plant, and per environment grid in `Soil/` or `Atmosphere/`) replaces the
+  - `summaries/Plant/<Model>/summaries.csv` (sums and means per plant, and per environment grid in `summaries/Soil/` or
+    `summaries/Atmosphere/`) replaces the
     summed CSV;
   - `segments.csv` for the `segment_plants` and the encoding3d frames replace the NetCDF raw logs and the MTG pickles;
   - `run.json` (status, timing, provenance: the packages' versions and commits, seeds, links, parameters, the
     forcings applied; its former `"versions"`) and `scenario.json` replace the simulation log and the saved scenario;
   - `checkpoints/` restart a run;
-  - `tables={name: function(scene)}` adds a package's own summary.
+  - `tables={name: function(scene)}` adds a package's own summary (`summaries/hand_declared/<name>.csv`).
 
   The `logger_class` / `log_settings` hook is removed.
 - **Scenario files:** `read_scenarios` reads fspm-utility's sheets once laid out as one row per entry, a `model`
@@ -235,3 +236,19 @@ populations give the same bits. Stored reference values of multi-plant scene sum
 | `UnionDataStructure.part_slice(k)` (part k's nodes contiguous, parts one after the other) | `union.part_positions(k)`: the union's positions of part k's nodes (the union in plant order) |
 | `union.get(name)[union.part_slice(k)]` | `union.get(name)[union.part_positions(k)]` |
 | a union's node index taken across a growth step (append-only before) | by entity id (`union.source_ids()`, the part's `index_of`): a plant's new nodes come before the next plant's |
+
+## 10. The recorder's tables in `summaries/`
+
+Every table a SceneRecorder writes is now in the output folder's `summaries/` (no fallback to the former paths);
+run.json, scenario.json, `forcings/`, `frames/`, `frames.fspm.zip` and `checkpoints/` stay at its root.
+`recorder.table(name)` takes the table's path in `summaries/` (a `tables=` name alone still works).
+
+| Former | Now |
+|---|---|
+| `<folder>/<name>.csv` (`tables={name: ...}`, a function or a `Summary`) | `<folder>/summaries/hand_declared/<name>.csv` |
+| `<folder>/Plant/<Population>/summaries.csv`, `segments.csv` | `<folder>/summaries/Plant/<Population>/summaries.csv`, `segments.csv` |
+| `<folder>/Soil/<Model>/summaries.csv`, `<folder>/Atmosphere/<Model>/summaries.csv` | `<folder>/summaries/Soil/<Model>/summaries.csv`, `<folder>/summaries/Atmosphere/<Model>/summaries.csv` |
+| `<folder>/conservation.csv` | `<folder>/summaries/conservation.csv` |
+| `recorder.table_names()`: `"<name>"`, `"Plant/<Model>/summaries"`, `"conservation"` | `"hand_declared/<name>"`, `"Plant/<Model>/summaries"`, `"conservation"` |
+
+A run recorded before cannot be resumed in place from a checkpoint: move its tables to these paths first.

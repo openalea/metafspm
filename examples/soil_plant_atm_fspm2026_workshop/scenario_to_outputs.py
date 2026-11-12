@@ -7,8 +7,9 @@ metafspm's one path, from a scenario table to the outputs read back (docs/tutori
    the soil's parameters, and the air's water potential over two days as a forcing (a CSV of time and value).
 2. The run: each scenario plants one seedling, builds the scene with its forcings and a SceneRecorder, and runs two
    days of hourly steps.
-3. The outputs: run.json, scenario.json, Plant/SeedlingWater/summaries.csv, Soil/Soil/summaries.csv, a frame every 6
-   hours and a checkpoint every 12 hours (the last one kept), in <output folder>/<scenario>.
+3. The outputs: run.json, scenario.json, summaries/Plant/SeedlingWater/summaries.csv,
+   summaries/Soil/Soil/summaries.csv, a frame every 6 hours and a checkpoint every 12 hours (the last one kept), in
+   <output folder>/<scenario>.
 4. Reading them back: the run's status and timing, the transpiration and the soil's water over the day, a frame.
 5. Variants: the humid scenario with the stomatal conductance at the low, middle and high values of its declared
    bounds.
@@ -48,8 +49,8 @@ def read_back(folder: str) -> dict:
     """The run's outputs: its status, the plant's and the soil's summaries by hour, the last frame."""
     with open(os.path.join(folder, "run.json")) as file:
         status = json.load(file)
-    plant = pd.read_csv(os.path.join(folder, "Plant", "SeedlingWater", "summaries.csv"))
-    soil = pd.read_csv(os.path.join(folder, "Soil", "Soil", "summaries.csv"))
+    plant = pd.read_csv(os.path.join(folder, "summaries", "Plant", "SeedlingWater", "summaries.csv"))
+    soil = pd.read_csv(os.path.join(folder, "summaries", "Soil", "Soil", "summaries.csv"))
     frames = encoding3d.read_index(os.path.join(folder, "frames", "scene.fspm.json"))["frames"]
     last = encoding3d.read(frames[-1]["path"])
     return dict(status=status, plant=plant.assign(hour=plant["time"] / 3600.),

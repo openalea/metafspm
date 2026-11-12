@@ -140,7 +140,7 @@ environment. See the documentation in `docs/`: the user guide (`docs/user.md`), 
 (`docs/conventions.md`) and the guide for porting an existing model (`docs/migration.md`).
 
 A simulation follows one path: a scenario table (`read_scenarios`), `planting`, a `Scene` with its `forcings=` and
-a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `Plant/` and `Soil/` summaries, the
+a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `summaries/Plant/` and `summaries/Soil/` tables, the
 frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](docs/tutorial.md)
 goes through it on a seedling in a soil column
 (`examples/soil_plant_atm_fspm2026_workshop/scenario_to_outputs.py`).

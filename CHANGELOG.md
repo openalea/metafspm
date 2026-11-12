@@ -84,6 +84,12 @@
 
 ### Breaking
 
+- The SceneRecorder's tables move to the output folder's `summaries/` (no fallback): the `tables=` tables (functions
+  or `Summary`) to `summaries/hand_declared/<name>.csv`, the automatic ones to `summaries/Plant/<Population>/`
+  (`summaries.csv`, `segments.csv`), `summaries/Soil/<Model>/`, `summaries/Atmosphere/<Model>/` and
+  `summaries/conservation.csv`; run.json, scenario.json, forcings/, frames/ and checkpoints/ stay at the root.
+  `recorder.table_names()` gives the paths in `summaries/` (`"hand_declared/<name>"`); `recorder.table(name)` takes
+  them or a `tables=` name alone. docs/migration.md section 10.
 - The environment variables `METAFSPM_CHECK_TOPOLOGY` and `METAFSPM_CHECK_ARCHETYPES` are removed (QA-10, no
   fallback): the self-checks are `Compute(checks={"topology", "archetypes"})` (any collection of names among
   `compute.CHECKS`, none by default; an unknown name raises ValueError), recorded in run.json's provenance

@@ -9,11 +9,12 @@ equation on an adaptive grid (component.RichardsSoilModel). Caribu's light is th
 the infinite canopy (its nested radiosity, models.LIGHT_SCENARIO), the sun's and the sky's, every hour.
 
 What the run writes in its folder, after every hour (all tables can be read while it runs):
-    Plant/WheatPlant/summaries.csv, Soil/RichardsSoilModel/summaries.csv
+    summaries/Plant/WheatPlant/summaries.csv, summaries/Soil/RichardsSoilModel/summaries.csv
                         every component's variables, per plant and for the soil
-    leaves.csv, roots.csv, plant_water.csv, leaf_water.csv, soil_water.csv
+    summaries/hand_declared/: leaves.csv, roots.csv, plant_water.csv, leaf_water.csv, soil_water.csv
                         the leaves' gas exchange, the roots' water, the water diagnostics (models.TABLES)
-    conservation.csv    the plant's and the soil's water balances (inflow, outflow, change, residual)
+    summaries/conservation.csv
+                        the plant's and the soil's water balances (inflow, outflow, change, residual)
     run.json            the run's progress, then its end: the time each model and component took
     frames/             an encoding3d frame every 12 hours (open frames/scene.fspm.json in ParaView), while it runs
     frames.fspm.zip     at the end, the frames packed into one file, checked, then the folder removed (ParaView

@@ -54,7 +54,7 @@ def test_a_failed_run_is_marked_with_its_error(tmp_path):
         scene.simulate(3)
     run = _json(tmp_path / "run.json")
     assert run["status"] == "failed" and run["error"] == "RuntimeError: the soil dried out" and run["iterations"] == 1
-    assert sorted(set(pd.read_csv(tmp_path / "Plant" / "RootPopulation" / "summaries.csv")["time"])) == [0., DT]
+    assert sorted(set(pd.read_csv(tmp_path / "summaries" / "Plant" / "RootPopulation" / "summaries.csv")["time"])) == [0., DT]
 
 
 def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
@@ -67,7 +67,7 @@ def test_a_stopped_run_and_a_loop_of_steps(tmp_path):
     run = _json(tmp_path / "b" / "run.json")                  # the progress, after every step
     assert run["status"] == "running" and run["iterations"] == 3 and run["time"] == 3 * DT
     scene.finish()                                            # the last state, then the status
-    times = sorted(set(pd.read_csv(tmp_path / "b" / "Plant" / "Seedlings" / "summaries.csv")["time"]))
+    times = sorted(set(pd.read_csv(tmp_path / "b" / "summaries" / "Plant" / "Seedlings" / "summaries.csv")["time"]))
     assert times == [0., 2 * DT, 3 * DT] and _json(tmp_path / "b" / "run.json")["status"] == "finished"
 
 
@@ -81,8 +81,8 @@ def test_tables_of_ones_own_in_memory():
     scene.simulate(3)
     soil = recorder.table("soil")
     assert soil["time"].tolist() == [0., 2 * DT]             # the last step (3) has no row: the function said so
-    assert set(recorder.table_names()) == {"soil", "Plant/RootPopulation/summaries", "Plant/Seedlings/summaries",
-                                           "Soil/SceneSoil/summaries"}
+    assert set(recorder.table_names()) == {"hand_declared/soil", "Plant/RootPopulation/summaries",
+                                           "Plant/Seedlings/summaries", "Soil/SceneSoil/summaries"}
     assert len(recorder.table("Plant/RootPopulation/summaries")) == 4                 # one plant, 4 states
     with pytest.raises(ValueError, match="folder"):
         SceneRecorder(frame_period="2 h")
@@ -117,5 +117,5 @@ def test_a_scene_recorded_without_a_step(tmp_path):
     scene = _scene(SceneRecorder(str(tmp_path), frame_period="1 h"))
     scene.simulate(0)                                       # a static model: its built state, once
     assert _json(tmp_path / "run.json")["status"] == "finished" and _json(tmp_path / "run.json")["iterations"] == 0
-    assert pd.read_csv(tmp_path / "Plant" / "Seedlings" / "summaries.csv")["time"].tolist() == [0.]
+    assert pd.read_csv(tmp_path / "summaries" / "Plant" / "Seedlings" / "summaries.csv")["time"].tolist() == [0.]
     assert sorted(os.listdir(tmp_path / "frames")) == ["frame_000000.glb", "scene.fspm.json"]
