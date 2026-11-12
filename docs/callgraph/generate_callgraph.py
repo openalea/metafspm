@@ -1424,7 +1424,7 @@ def main() -> None:
     preview_path = OUTDIR / "preview.svg"
     html_path = OUTDIR / "index.html"
 
-    preview_path.write_text(svg, encoding="utf-8")
+    # preview_path.write_text(svg, encoding="utf-8")
     proxy_to_cluster = build_proxy_to_cluster(dot_source)
     files = [f for f in PACKAGE_DIR.rglob("*.py") if not should_skip_file(f)]
     inh_pairs = collect_inheritance_pairs(files)
