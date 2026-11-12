@@ -31,7 +31,7 @@ from component import RichardsSoilModel
 from models import (FRAME_VARIABLES, LIGHT_SCENARIO, SCENE_TRANSLATOR, SOIL_SCENARIO, TABLES, WHEAT_SCENARIO,
                     WheatPlant, weather)
 
-DAYS = float(sys.argv[1]) if len(sys.argv) > 1 else 14
+DAYS = float(sys.argv[1]) if len(sys.argv) > 1 else 25
 PLANTS = int(sys.argv[2]) if len(sys.argv) > 2 else 2
 HERE = os.path.dirname(os.path.abspath(__file__))
 FOLDER = sys.argv[3] if len(sys.argv) > 3 else os.path.join(HERE, "outputs", "from_sowing")
