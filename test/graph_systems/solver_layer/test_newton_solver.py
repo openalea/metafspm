@@ -182,10 +182,14 @@ class _DenseSystem:
 
 
 def _scaled_linear(scale=1e6):
+    """A linear system scaled to 1e6, its solution of order 1e4, its residual's round-off made explicit: a
+    deterministic noise of 1e-6 (about eps ||J|| ||x||) changing with every bit of x, as A x - b's round-off does on
+    most BLAS (some, as macOS Accelerate's, give this small product exactly, its residual 0)."""
     rng = np.random.default_rng(0)
     A = scale * (np.eye(6) * 4. + rng.uniform(-1., 1., (6, 6)))
     b = A @ rng.uniform(5e3, 1e4, 6)                      # the solution of order 1e4 (a potential in hPa)
-    return _DenseSystem(lambda x: A @ x - b, lambda x: A), np.linalg.solve(A, b)
+    round_off = lambda x: 1e-6 * np.cos(1e12 * x)        # noqa: E731
+    return _DenseSystem(lambda x: A @ x - b + round_off(x), lambda x: A), np.linalg.solve(A, b)
 
 
 def test_a_linear_system_below_its_residual_floor_converges_on_its_step():

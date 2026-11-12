@@ -127,8 +127,9 @@ def test_auto_threads_are_the_processors():
 
 def test_a_sections_threads_are_its_work_and_its_ceiling_within_the_budget():
     """section_threads: min(the budget, the section's independent work units, its ceiling: "bandwidth"
-    BANDWIDTH_THREADS_RULE at most), at least 1: a small scene's sections run in one thread whatever the budget."""
-    rule = compute_module.BANDWIDTH_THREADS_RULE
+    machine()'s bandwidth_threads at most: BANDWIDTH_THREADS_RULE, fewer on a machine of fewer processors), at least 1:
+    a small scene's sections run in one thread whatever the budget."""
+    rule = compute_module.machine()["bandwidth_threads"]
     for threads, work, section, expected in ((12, 8, "compute", 8), (12, 100, "compute", 12), (2, 100, "compute", 2),
                                              (12, 100, "bandwidth", rule), (2, 100, "bandwidth", 2),
                                              (12, 1, "bandwidth", 1), (12, 0, "compute", 1)):

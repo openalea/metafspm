@@ -1279,7 +1279,8 @@ class ProcessRunner:
         out["groups"] = [names(group) for group in self.plan["groups"]]
         out["measured_MB_per_process"] = {str(group): {"resident": None if entry["resident_MB"] is None
                                                        else round(entry["resident_MB"]),
-                                                       "peak": round(entry["peak_MB"])}
+                                                       "peak": None if entry["resident_MB"] is None
+                                                       else round(entry["peak_MB"])}
                                           for group, entry in sorted(self._measured.items())}
         out["balance"] = None if not self._balance else round(sum(self._balance) / len(self._balance), 3)
         return out

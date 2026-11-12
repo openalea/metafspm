@@ -6,6 +6,7 @@ tables, the frames' values and the checkpoints; the placement of processes on th
 import json
 import os
 import signal
+import sys
 import warnings
 from dataclasses import dataclass
 
@@ -148,7 +149,11 @@ def test_the_recorder_tables_and_checkpoints_are_the_same_at_two_processes(tmp_p
         run = json.load(file)
     assert run["status"] == "finished" and run["processes"]["count"] == 2
     assert sorted(sum(run["processes"]["groups"], [])) == LAYOUT
-    assert all(entry["peak"] > 0 for entry in run["processes"]["measured_MB_per_process"].values())
+    measured = run["processes"]["measured_MB_per_process"].values()
+    if sys.platform.startswith("linux"):                  # read from /proc: None elsewhere
+        assert all(entry["peak"] > 0 for entry in measured)
+    else:
+        assert all(entry["peak"] is None or entry["peak"] > 0 for entry in measured)
 
 
 def test_a_checkpoint_of_two_processes_resumes_at_one_and_at_two(tmp_path):
