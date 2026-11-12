@@ -17,6 +17,9 @@ from openalea.metafspm.solve.reduction import Reduction, _difference
 
 from test_reduction import _model, _soil_walls, _xylem
 
+workers_processes = pytest.mark.skipif(not hasattr(os, "fork"),
+                                       reason="the store's files and claims serve the forked workers (POSIX only)")
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -59,6 +62,7 @@ def test_a_kind_is_evaluated_once_and_read_by_another_population_with_the_same_b
                                   alone.data_structure.get("water_potential"))
 
 
+@workers_processes
 def test_a_kind_written_by_another_process_is_read_from_its_file(store):
     model = _kinded_model()
     pid = os.fork()
@@ -115,6 +119,7 @@ def test_two_templates_of_one_key_but_other_vertices_are_two_kinds(store):
     assert store.name(other, archetype_key) != name
 
 
+@workers_processes
 def test_a_kind_claimed_by_another_process_is_awaited_not_evaluated_twice(store):
     model = _kinded_model()
     population = _solved(model)                                  # the kind, to be written by a "claimer"
@@ -141,6 +146,7 @@ def test_a_kind_claimed_by_another_process_is_awaited_not_evaluated_twice(store)
     assert not os.path.exists(os.path.join(other.folder, name + ".claim"))
 
 
+@workers_processes
 def test_a_kind_whose_claimer_ended_without_it_is_left_to_the_waiter(tmp_path):
     import subprocess
     ended = subprocess.Popen(["true"])
