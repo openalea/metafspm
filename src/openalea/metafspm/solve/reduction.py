@@ -1649,8 +1649,8 @@ def _difference(first, second, path: str = "archetype"):
     if issparse(first) or issparse(second):
         if not (issparse(first) and issparse(second)) or first.shape != second.shape:
             return f"{path}: sparse shapes or types differ"
-        a, b = first.tocsr(), second.tocsr()
-        a.sort_indices()
+        a, b = first.tocsr(copy=True), second.tocsr(copy=True)   # copies: sorting a stored matrix in place
+        a.sort_indices()                                           # would change its later products' order
         b.sort_indices()
         same = all(np.array_equal(x, y) for x, y in ((a.indptr, b.indptr), (a.indices, b.indices))) and \
             np.array_equal(a.data, b.data, equal_nan=True)
