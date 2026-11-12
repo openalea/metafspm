@@ -276,19 +276,23 @@ def test_a_fixed_point_not_converged_across_processes_warns_as_one_process():
         np.testing.assert_array_equal(outcome[key], values, err_msg=key)
 
 
-def test_a_fixed_point_ending_on_a_non_finite_iterate_raises_as_one_process():
-    messages = []
+def test_a_fixed_point_over_a_nan_kept_at_one_entry_ends_as_one_process():
+    """A NaN kept at one entry through the iterations is left out of the convergence at any process count: the same
+    outcome (iterations, warnings) and the same bits at 1 and 2 processes."""
+    outcomes = []
     for processes in (1, 2):
         scene = _scene(processes, coupling=FixedPoint(ITERATED, max_iterations=3))
         soil = scene.model("SceneSoil").grid
         nitrate = np.array(soil.get("soil_nitrate"), dtype=float)
         nitrate.flat[0] = np.nan
         soil.set("soil_nitrate", nitrate)
-        with pytest.raises(FloatingPointError) as raised:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             scene.run()
-        messages.append(str(raised.value))
+        outcomes.append((dict(scene.coupling_iterations), sorted(str(w.message) for w in caught if "FixedPoint" in str(w.message)),
+                         np.array(scene.model("SceneSoil").grid.get("soil_nitrate"), dtype=float).tobytes()))
         scene.finish()
-    assert messages[0] == messages[1] and "soil_nitrate" in messages[0]
+    assert outcomes[0] == outcomes[1]
 
 
 @dataclass

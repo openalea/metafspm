@@ -139,12 +139,20 @@ def names(bound) -> list:
     return [(step_name, name) for step_name, _, step in bound for _, name in _written(step)]
 
 
+def _fixed_nan(old, new):
+    """The entries NaN in both iterates: a variable a model leaves NaN where it does not apply (GRANAP's Kx on a
+    leaf), not an iterate going wrong."""
+    return np.isnan(old) & np.isnan(new)
+
+
 def converged(before: list, after: list, relative_tolerance: float, absolute_tolerance: float) -> bool:
-    """Whether every variable moved by at most absolute_tolerance + relative_tolerance × its largest value; a NaN or an infinity in
-    either iterate is no convergence."""
+    """Whether every variable moved by at most absolute_tolerance + relative_tolerance × its largest value; a NaN at
+    the same entries in both iterates is left out, any other NaN or infinity is no convergence."""
     for old, new in zip(before, after):
         if old.shape != new.shape:
             return False
+        compared = ~_fixed_nan(old, new)
+        old, new = old[compared], new[compared]
         if not old.size:
             continue
         if not (np.isfinite(old).all() and np.isfinite(new).all()):
@@ -154,10 +162,13 @@ def converged(before: list, after: list, relative_tolerance: float, absolute_tol
     return True
 
 
-def check_finite(bound, after: list, time: float) -> None:
-    """A FloatingPointError naming the first iterated step and variable holding a NaN or an infinity in *after*."""
-    for (step_name, name), new in zip(names(bound), after):
+def check_finite(bound, before: list, after: list, time: float) -> None:
+    """A FloatingPointError naming the first iterated step and variable holding a NaN or an infinity in *after*,
+    other than a NaN already at that entry in *before*."""
+    for (step_name, name), old, new in zip(names(bound), before, after):
         bad = ~np.isfinite(new)
+        if old.shape == new.shape:
+            bad &= ~_fixed_nan(old, new)
         if bad.any():
             raise FloatingPointError(f"FixedPoint: '{step_name}' wrote a non-finite '{name}' ({int(bad.sum())} of "
                                      f"{new.size} values NaN or infinite) at time {time} s: the iteration cannot "

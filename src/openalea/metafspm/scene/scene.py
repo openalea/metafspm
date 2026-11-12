@@ -620,6 +620,7 @@ class Scene:
             model.__dict__.pop("_before_step", None)
         bound = [entry for entry in coupling._bound if id(entry[2]) in snapshots]
         before, done = values(bound), 0
+        previous = before
         started = perf_counter()
         for _ in range(coupling.max_iterations):
             self.runner.run_again(self, bound, snapshots)
@@ -627,9 +628,9 @@ class Scene:
             after = values(bound)
             if converged(before, after, coupling.relative_tolerance, coupling.absolute_tolerance):
                 break
-            before = after
+            previous, before = before, after
         else:
-            check_finite(bound, after, self.time)
+            check_finite(bound, previous, after, self.time)
             warn_not_converged(coupling, self.time)
             self.coupling_iterations["not_converged"] += 1
         self._time("coupling iterations", perf_counter() - started)

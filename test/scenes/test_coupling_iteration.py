@@ -93,19 +93,42 @@ def test_a_step_whose_data_structure_changed_after_it_ran_is_refused():
 
 
 def test_a_non_finite_iterate_is_not_converged():
-    """A NaN or an infinity in what the iterated steps write is no convergence: np.nanmax would skip it."""
+    """A NaN appearing or moving, or an infinity, in what the iterated steps write is no convergence: np.nanmax
+    would skip it."""
     from openalea.metafspm.coupling.iteration import converged
     assert converged([np.array([1., 2.])], [np.array([1., 2.])], 1e-8, 0.)
     assert not converged([np.array([1., 2.])], [np.array([1., np.nan])], 1e-8, 0.)
-    assert not converged([np.array([np.nan, np.nan])], [np.array([np.nan, np.nan])], 1e-8, 0.)
+    assert not converged([np.array([np.nan, 2.])], [np.array([1., np.nan])], 1e-8, 0.)
     assert not converged([np.array([1., 2.])], [np.array([1., np.inf])], 1e-8, 0.)
 
 
-def test_an_iteration_ending_on_a_non_finite_state_raises_naming_the_step_and_the_variable():
+def test_a_nan_at_the_same_entries_in_both_iterates_is_left_out():
+    """A variable a model leaves NaN where it does not apply (GRANAP's Kx on a leaf) does not keep the iteration
+    from converging; the other entries are still compared."""
+    from openalea.metafspm.coupling.iteration import converged
+    assert converged([np.array([np.nan, 2.])], [np.array([np.nan, 2.])], 1e-8, 0.)
+    assert converged([np.array([np.nan, np.nan])], [np.array([np.nan, np.nan])], 1e-8, 0.)
+    assert not converged([np.array([np.nan, 2.])], [np.array([np.nan, 3.])], 1e-8, 0.)
+
+
+def test_an_iteration_ending_on_a_new_non_finite_value_raises_naming_the_step_and_the_variable():
+    """A NaN that appears in the last iterate raises; one already at that entry in the iterate before does not."""
+    from openalea.metafspm.coupling.iteration import check_finite
+    scene = _scene(coupling=FixedPoint(ITERATED, relative_tolerance=1e-12, max_iterations=5))
+    bound = [entry for entry in scene.coupling._bound if entry[0] == "SceneSoil.nitrate"]
+    nitrate = np.ones(3)
+    appeared = nitrate.copy()
+    appeared[0] = np.nan
+    with pytest.raises(FloatingPointError, match=r"SceneSoil\.nitrate.*soil_nitrate"):
+        check_finite(bound, [nitrate], [appeared], 0.)
+    check_finite(bound, [appeared], [appeared.copy()], 0.)
+
+
+def test_a_nan_kept_at_one_entry_through_the_iterations_warns_without_raising():
     scene = _scene(coupling=FixedPoint(ITERATED, relative_tolerance=1e-12, max_iterations=5))
     soil = scene.model("SceneSoil").grid
     nitrate = np.array(soil.get("soil_nitrate"), dtype=float)
     nitrate.flat[0] = np.nan
     soil.set("soil_nitrate", nitrate)
-    with pytest.raises(FloatingPointError, match=r"SceneSoil\.nitrate.*soil_nitrate"):
+    with pytest.warns(UserWarning, match="not converged"):
         scene.run()

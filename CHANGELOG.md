@@ -4,6 +4,9 @@
 
 ### Added
 
+- A fixed-point coupling's convergence leaves out a NaN at the same entries in both iterates (a variable a model
+  leaves NaN where it does not apply, as GRANAP's `Kx`, `PAR_reflectance`, `Ts`): a FixedPoint over a GRANAP step
+  can now converge; a NaN that appears or moves, or an infinity, is still no convergence and still raises.
 - `Compute(processes=n)` runs a fixed-point coupling (`Scene(coupling=FixedPoint(...))`, route B, B6): the
   iteration in the coordinator, the populations' iterated steps restored and run again in their workers (their
   snapshots kept there), the environment's in the coordinator; the same iterate counts, warnings, FloatingPointError
