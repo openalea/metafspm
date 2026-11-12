@@ -54,6 +54,7 @@ test:
     - test/**
     - docs/conventions.md                       # test_conventions_doc checks the page against the code
     - examples/soil_plant_atm_fspm2026_workshop/*.py  # test_soil_plant_atm_fspm2026_workshop runs its scenes
+    - examples/soil_plant_atm_fspm2026_workshop/scenarios/*.csv  # and reads its scenario tables
     - examples/use_case_1/*.py                  # test_use_case_1_*: the use case's component and models
 
 
