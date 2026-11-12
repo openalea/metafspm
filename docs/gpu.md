@@ -127,12 +127,11 @@ Caribu's GPU near field needs numba's CUDA support (`numba.cuda.is_available()`;
 3. **Use case 1 on the device, against the CPU:**
 
    ```bash
-   cd examples/use_case_1
-   python benchmark.py --plants 2 --days 3 --label cpu_2p3d
-   python benchmark.py --plants 2 --days 3 --device cuda --label cuda_2p3d
+   python test/benchmarks/use_case_1/benchmark.py --plants 2 --days 3 --label cpu_2p3d
+   python test/benchmarks/use_case_1/benchmark.py --plants 2 --days 3 --device cuda --label cuda_2p3d
    ```
 
-   Both entries go to `outputs/benchmarks/<commit>.json`. Compare each step's `results`: with cupyx, the archetypes
+   Both entries go to `test/benchmarks/use_case_1/outputs/benchmarks/<commit>.json`. Compare each step's `results`: with cupyx, the archetypes
    should agree to round-off, because the triangular solves on the device sum in another order. Compare also the
    step times and the `device` entry (its transfers). `--linear-solver superlu` keeps the linear solves on the
    host and moves only the archetypes. Run it under a memory bound, one run at a time

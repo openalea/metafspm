@@ -6,7 +6,7 @@ results (results(): transpiration, uptake, the leaves' gas exchange, the roots' 
 soil's balance residuals, to compare runs), and the memory (RSS after each step; after malloc_trim and the peak at the
 end).
 
-    python benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
+    python test/benchmarks/use_case_1/benchmark.py [--plants 2] [--days 3] [--label text] [--outputs] [--checkpoint-at 168 ...]
                         [--resume outputs/benchmarks/checkpoints/<label>/step_000168]
                         [--scenario leaf_ports=bundles vapour_path=air_spaces ...]
                         [--threads auto|n] [--linear-solver superlu|superlu_reuse|cholmod|cupy]
@@ -63,7 +63,8 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+EXAMPLE = os.path.join(HERE, "..", "..", "..", "examples", "use_case_1")   # the use case it times
+sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from openalea.metafspm.solve import reduction as reduction_module    # noqa: E402
 
@@ -101,7 +102,7 @@ HOUR = 3600.
 
 def commit() -> str:
     """The metafspm commit (short hash), "-dirty" when the tracked files differ from it."""
-    root = os.path.dirname(os.path.dirname(HERE))
+    root = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
     head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True)
     dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, capture_output=True,
                            text=True)

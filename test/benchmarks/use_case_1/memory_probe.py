@@ -1,9 +1,9 @@
 """
 The memory a scene holds, by owner (devplan_scene_parallel.md P0: what grows per node, what is fixed)::
 
-    python benchmark.py --plants 8 --days 8 --memory          # memory_probe.report(scene) at the end, in the JSON
-    python benchmark.py --plants 2 --days 8 --tracemalloc 8   # and the allocations alive at the end, by line and stack
-    python benchmark.py --plants 8 --days 12 --resume <checkpoint> --thread-scaling     # the last step's solves, 1-12
+    python test/benchmarks/use_case_1/benchmark.py --plants 8 --days 8 --memory          # memory_probe.report(scene) at the end, in the JSON
+    python test/benchmarks/use_case_1/benchmark.py --plants 2 --days 8 --tracemalloc 8   # and the allocations alive at the end, by line and stack
+    python test/benchmarks/use_case_1/benchmark.py --plants 8 --days 12 --resume <checkpoint> --thread-scaling     # the last step's solves, 1-12
 
 report(scene) walks what the scene holds, owner by owner in a fixed order (each object counted once, at its first
 owner): the plants' DataStructure columns (their variables), its other arrays (derived caches, last_call's values),

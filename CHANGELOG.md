@@ -4,6 +4,10 @@
 
 ### Added
 
+- Use case 1 keeps what a user reads and runs (`run.py`, `models.py`, `component.py`, its README with a short note on
+  its speed): its benchmark (`benchmark.py`, `memory_probe.py`) and the measurements are in
+  `test/benchmarks/use_case_1/` (its README), its tests in `test/examples/test_use_case_1_plant.py` and
+  `test_use_case_1_assembly.py` (in metafspm's suite, skipped without the ports).
 - A fixed-point coupling's convergence leaves out a NaN at the same entries in both iterates (a variable a model
   leaves NaN where it does not apply, as GRANAP's `Kx`, `PAR_reflectance`, `Ts`): a FixedPoint over a GRANAP step
   can now converge; a NaN that appears or moves, or an infinity, is still no convergence and still raises.

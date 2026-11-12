@@ -26,7 +26,7 @@ from openalea.metafspm.coupling.units import conversion_factor                  
 from openalea.metafspm.data_structure.data_api import EntityView, LocatedView        # noqa: E402
 from openalea.metafspm import Planting, planting, Scene, SceneRecorder
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
+EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "use_case_1")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import RichardsSoilModel                                               # noqa: E402

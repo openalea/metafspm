@@ -20,7 +20,7 @@ from openalea.archisimple.parameter_sets import WHEAT_ON_A_SHOOT                
 from openalea.metafspm import CompositeModel, Planting, planting, Scene
 from openalea.metafspm.data_structure.data_api import EntityView                      # noqa: E402
 
-EXAMPLE = os.path.join(os.path.dirname(__file__), "..")
+EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "use_case_1")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
 from component import NodalRootEmergence, WheatCrown                                   # noqa: E402
