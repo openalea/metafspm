@@ -59,9 +59,9 @@ test:
 
 
   commands:
-    - python -u -X faulthandler -c "import faulthandler; faulthandler.dump_traceback_later(900, exit=True); from openalea.metafspm.compute import main; main(['warm_up'])"  # DIAGNOSTIC (Windows hang): numba's cache filled before the suites, every thread's stack printed after 15 min
+    - python -m openalea.metafspm warm_up      # numba's cache filled before the suites (compute.warm_up)
     - cd test
-    - pytest -v -o faulthandler_timeout=900   # DIAGNOSTIC (Windows hang)
+    - pytest -v
 
 about:
   home: {{ home }}
