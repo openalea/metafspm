@@ -297,9 +297,16 @@ the frames, the checkpoints and `scene.population(name).data_structure` read, un
 - `scene.apply(function, population=)` runs a module-level function on the live DataStructure in its worker (the
   developer's way to anything the copy does not hold, an MPG method's state).
 
-What crosses processes is the explicit coupling only: a component of one population reading another's within the
-step, an environment model's component on a population's own DataStructure, or a `FixedPoint` keep `processes=1`
-(refused with their names). A component never writes a DataStructure it does not own: an environment component reads
+Rounds: a population whose exchanges read another population (a link from it, a split shared with it) runs after
+that one's publication when that one comes first in the scene's order, and not before the exchanges into it
+otherwise; the populations of a round run at once. Each exchange thus reads what it reads in one process.
+
+A `FixedPoint` iterates in the coordinator: each worker keeps the start of its populations' iterated steps (their
+snapshots, taken in its run) and sends the variables they write back; each iteration runs the environment's iterated
+steps in the coordinator and the populations' in their workers (restored to their start there, the coordinator's
+copy restored too, after the exchanges into them, published), in rounds; the convergence is tested on the copies in
+the bound steps' order. An environment model's component on a population's own DataStructure keeps `processes=1`
+(refused with its name). A component never writes a DataStructure it does not own: an environment component reads
 the plants through the union or a mapping, as in one process. The results are the same bits at any process count
 (the plant order above; test/scenes/test_runner.py).
 

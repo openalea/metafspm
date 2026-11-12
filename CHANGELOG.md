@@ -4,6 +4,12 @@
 
 ### Added
 
+- `Compute(processes=n)` runs a fixed-point coupling (`Scene(coupling=FixedPoint(...))`, route B, B6): the
+  iteration in the coordinator, the populations' iterated steps restored and run again in their workers (their
+  snapshots kept there), the environment's in the coordinator; the same iterate counts, warnings, FloatingPointError
+  messages and bits as one process. Links between two populations are no longer refused: a population waits for the
+  publication of the populations before it that its exchanges read (rounds), the same bits as one process.
+
 - Shared archetype store (route B, B4; `solve.archetype_store`): a reduction's archetype kind evaluated by one
   population is read by every other one needing it, the same bits (`Compute(checks={"archetypes"})` checks the kinds
   read too). In one process the populations hold one object per kind (`SequentialRunner`); with `Compute(processes=n)`

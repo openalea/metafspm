@@ -6,6 +6,7 @@ tables, the frames' values and the checkpoints; the placement of processes on th
 import json
 import os
 import signal
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,6 +16,7 @@ import pytest
 from openalea.metafspm.compute import Compute
 from openalea.metafspm.coupling.cadence import Cadence
 from openalea.metafspm.coupling.component import FunctionalComponent, input_variable, state_variable
+from openalea.metafspm.coupling.composite_wrapper import CompositeModel
 from openalea.metafspm.coupling.iteration import FixedPoint
 from openalea.metafspm.coupling.schedule import Step
 from openalea.metafspm.data_structure.configs import ScalesConfig as scales
@@ -24,8 +26,8 @@ from openalea.metafspm.scene.recorder import SceneRecorder, Summary
 from openalea.metafspm.scene.scene import Scene
 from openalea.metafspm.solve.decorator import rate
 
-from growth import DOC
-from scene_doubles import DT, RootPopulation, SceneSoil, doubles_planting, soil_translator
+from growth import DOC, CarbonProbe, RootGrowthProbe
+from scene_doubles import DT, RootPopulation, SceneExudation, SceneSoil, doubles_planting, soil_translator
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "fork"), reason="the workers fork")
 
@@ -232,11 +234,126 @@ def test_the_archetype_store_is_the_runs_and_its_folder_goes_with_it():
     assert not os.path.exists(folder)
 
 
+# ── a fixed-point coupling and links between populations across processes ──
+
+ITERATED = ("SceneSoil.nitrate", "a.exudation", "b.exudation", "c.exudation", "d.exudation")
+INTERLEAVED = ("a.exudation", "b.exudation", "SceneSoil.nitrate", "c.exudation", "a.exudation", "d.exudation")
+
+
+def _iterated(processes, steps, **options) -> tuple:
+    scene = _scene(processes, coupling=FixedPoint(steps, **options))
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for _ in range(4):
+                scene.run()
+        not_converged = [str(warning.message) for warning in caught if "not converged" in str(warning.message)]
+        return _outcome(scene), dict(scene.coupling_iterations), dict(scene.calls), not_converged
+    finally:
+        scene.finish()
+
+
+@pytest.mark.parametrize("steps", [ITERATED, INTERLEAVED], ids=["soil first", "interleaved"])
+def test_a_fixed_point_across_processes_gives_the_bits_and_iterations_of_one_process(steps):
+    """The iteration runs in the coordinator, the populations' iterated steps in their workers, restored there from
+    their starts: the same iterates (bit for bit), the same iteration counts and calls at 1, 2 and 4 processes."""
+    reference, counts, calls, _ = _iterated(1, steps, relative_tolerance=1e-12, max_iterations=50)
+    assert counts["steps"] == 4 and counts["most"] > 2 and counts["not_converged"] == 0
+    for processes in (2, PLANTS):
+        outcome, other_counts, other_calls, _ = _iterated(processes, steps, relative_tolerance=1e-12,
+                                                          max_iterations=50)
+        assert other_counts == counts and other_calls == calls
+        for key, values in reference.items():
+            np.testing.assert_array_equal(outcome[key], values, err_msg=f"processes={processes}: {key}")
+
+
+def test_a_fixed_point_not_converged_across_processes_warns_as_one_process():
+    reference, counts, _, warned = _iterated(1, ITERATED, relative_tolerance=1e-15, max_iterations=2)
+    assert counts["not_converged"] == 4 and len(warned) == 4
+    outcome, other_counts, _, other_warned = _iterated(2, ITERATED, relative_tolerance=1e-15, max_iterations=2)
+    assert other_counts == counts and other_warned == warned
+    for key, values in reference.items():
+        np.testing.assert_array_equal(outcome[key], values, err_msg=key)
+
+
+def test_a_fixed_point_ending_on_a_non_finite_iterate_raises_as_one_process():
+    messages = []
+    for processes in (1, 2):
+        scene = _scene(processes, coupling=FixedPoint(ITERATED, max_iterations=3))
+        soil = scene.model("SceneSoil").grid
+        nitrate = np.array(soil.get("soil_nitrate"), dtype=float)
+        nitrate.flat[0] = np.nan
+        soil.set("soil_nitrate", nitrate)
+        with pytest.raises(FloatingPointError) as raised:
+            scene.run()
+        messages.append(str(raised.value))
+        scene.finish()
+    assert messages[0] == messages[1] and "soil_nitrate" in messages[0]
+
+
+@dataclass
+class PlantSignal(FunctionalComponent):
+    """A plant's toy signal: its total mass (a scalar), received by another population's plants (a link between two
+    populations), and what they make of it."""
+    struct_mass: float = input_variable(**DOC, by="RootGrowthProbe", default=0., scale=scales.SubOrgan)
+    received: float = input_variable(**DOC, by="PlantSignal", default=0., scale=scales.SubOrgan)
+    total: float = state_variable(**DOC, default=0., location="scalar", kind="intensive")
+    echo: float = state_variable(**DOC, default=0., scale=scales.SubOrgan, kind="extensive")
+
+    @rate
+    def _total(self, struct_mass):
+        return np.sum(struct_mass)
+
+    @rate
+    def _echo(self, struct_mass, received):
+        return struct_mass * (1. + received)
+
+
+class SignalPopulation(CompositeModel):
+    initiators = (RootGrowthProbe,)
+    parts = {"growth": RootGrowthProbe, "carbon": CarbonProbe, "exudation": SceneExudation, "signal": PlantSignal}
+
+
+def _signals(processes) -> dict:
+    """b reads a (before it: this step's total), a reads d (after it: the step before's), c reads b (two rounds)."""
+    table = doubles_planting([SignalPopulation] * PLANTS, population=LAYOUT)
+    translator = soil_translator("SceneExudation")
+    for receiver, provider in (("b", "a"), ("a", "d"), ("c", "b")):
+        translator.link(f"{receiver}.PlantSignal", "received", f"{provider}.PlantSignal", {"total": 1.})
+    scene = Scene(table, environment=[SceneSoil], translator=translator, time_step=DT,
+                  compute=Compute(threads=1, processes=processes))
+    try:
+        for _ in range(4):
+            scene.run()
+        return {f"{population.name} {name}": np.asarray(population.data_structure.get(name)).copy()
+                for population in scene.populations for name in ("received", "echo", "total", "exudation")}
+    finally:
+        scene.finish()
+
+
+def test_links_between_populations_across_processes_give_the_bits_of_one_process():
+    reference = _signals(1)
+    assert np.all(reference["b received"] > 0.) and np.all(reference["c received"] > 0.)
+    for processes in (2, PLANTS):
+        outcome = _signals(processes)
+        for key, values in reference.items():
+            np.testing.assert_array_equal(outcome[key], values, err_msg=f"processes={processes}: {key}")
+
+
+def test_the_rounds_follow_what_the_exchanges_read():
+    """A population after the earlier ones it reads, its own earlier task, and not before an earlier one reading it."""
+    process_runner = runner.ProcessRunner(runner.placement(2, [1] * PLANTS))
+    a, b, c, d = (type("Population", (), {"name": name})() for name in LAYOUT)
+    process_runner._reads = {"a": {"d"}, "b": {"a"}, "c": {"b"}, "d": set()}
+    rounds = process_runner._rounds([(a, None), (b, None), (c, None), (d, None)])
+    assert [[population.name for population, _ in tasks] for tasks in rounds] == [["a", "d"], ["b"], ["c"]]
+    process_runner._reads = {name: set() for name in LAYOUT}
+    rounds = process_runner._rounds([(a, 1), (b, 2), (a, 4), (d, 5)])
+    assert [[(population.name, step) for population, step in tasks] for tasks in rounds] == \
+        [[("a", 1), ("b", 2), ("d", 5)], [("a", 4)]]
+
+
 def test_what_processes_cannot_run_is_refused():
-    scene = _scene(1)
-    scene.coupling = FixedPoint(steps=("ShadeModel.shade",))       # (bound: a scene step iterated)
-    with pytest.raises(ValueError, match="coupling='explicit'.*B6"):
-        runner.ProcessRunner(runner.placement(2, [1] * PLANTS)).check(scene)
     with pytest.raises(ValueError, match="4 population"):
         _scene(5)
     with pytest.raises(ValueError, match="processes is 'auto' or a positive integer"):

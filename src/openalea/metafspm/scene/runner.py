@@ -37,10 +37,20 @@ scene.population(name).data_structure read. Within a step:
 
 A population's values are therefore the same bits at any process count: its computations do not depend on the process
 running them, its inputs are the coordinator's exchanges either way, and every scene-level sum over plants is taken in
-plant order (the plant-order rule, conventions.md). Only the explicit coupling crosses processes (a FixedPoint
-iterates models within the step: phase B6 of route B); a link between two populations (one reading the other within
-the step) and an environment model working on a population's own DataStructure keep processes=1, refused with their
-names.
+plant order (the plant-order rule, conventions.md).
+
+Rounds. A population whose exchanges read another population (a link between two populations, a split shared with
+another one) runs after that one's publication when that one comes first in the scene's order, and not before the
+exchanges into it otherwise: the populations of one round run at once, the rounds in turn, so that each exchange reads
+what it reads in one process (where each population's exchanges are run just before it). Without such links a step is
+one round.
+
+A fixed-point coupling (Scene(coupling=FixedPoint(...)), coupling.iteration): the iteration runs in the coordinator
+(its convergence tested on the copies, in the bound steps' order: the same iterate counts, warnings and errors as in
+one process). Each worker keeps the start of its iterated steps (their snapshots, taken in its explicit run) and
+sends the variables they write back; each iteration runs the environment's iterated steps in the coordinator and the
+populations' in their workers (run_again: restored, after the exchanges into them, run, published), in rounds. An
+environment model working on a population's own DataStructure keeps processes=1, refused with its name.
 
 Placement (placement(), §11.1 of route B's plan): the physical cores of the processors the process may run on
 (hyperthread siblings counted once, the low-power cores of a hybrid CPU left out), the workers on the efficient cores,
@@ -447,6 +457,74 @@ def check_publication(data_structure, whole: dict) -> None:
         expect(np.array_equal(np.asarray(data_structure.entity_ids(location)), ids), f"the entity ids at {location}")
 
 
+# ── the fixed-point coupling's steps and the populations' rounds ──────────
+
+def _bound_index(coupling, step):
+    """The index of *step* among *coupling*'s bound steps (FixedPoint._bound: the same list in every forked
+    process), None when it is not iterated."""
+    for index, (_, _, bound) in enumerate(coupling._bound):
+        if bound is step:
+            return index
+    return None
+
+
+def run_step_again(scene, name: str, model, step, kept: dict) -> None:
+    """*step* (of *model*, bound as *name*) run again in this process: restored to its start (*kept*: _snapshot()),
+    after the exchanges into its model (coupling.iteration)."""
+    from openalea.metafspm.coupling.iteration import _restore
+    from openalea.metafspm.scene.scene import _own_data_structures
+    _restore(step, kept, name)
+    for data_structure in _own_data_structures(model):
+        scene.exchanges.exchange(into=data_structure)
+    step.run()
+
+
+def _copy_snapshot(step, variables: list) -> dict:
+    """A worker's snapshot of *step* as its coordinator keeps it: the variables the step writes ([(name, values)],
+    the worker's _snapshot's) on the copy (the coordinator's *step*: its components work on the copies)."""
+    from openalea.metafspm.coupling.iteration import _written
+    written = _written(step)
+    if [name for _, name in written] != [name for name, _ in variables]:
+        raise RuntimeError(f"FixedPoint: the variables {step.name} writes differ between its worker "
+                           f"({[name for name, _ in variables]}) and the coordinator's copy "
+                           f"({[name for _, name in written]})")
+    return {"variables": [(root, name, values) for (root, name), (_, values) in zip(written, variables)]}
+
+
+def _set_balance(component, conservation, conservation_start) -> None:
+    """A component's conserved quantities' balances as its worker holds them (None: none)."""
+    for attribute, value in (("_conservation", conservation), ("_conservation_start", conservation_start)):
+        if value is None:
+            component.__dict__.pop(attribute, None)
+        else:
+            component.__dict__[attribute] = value
+
+
+def population_reads(scene) -> dict:
+    """{population name: the names of the other populations the exchanges into it read}: a link from another
+    population's component, a split shared with another population (its totals summed over every receiving one:
+    coupling.cross's _split_totals)."""
+    from openalea.metafspm.coupling.cross import _underlying
+    owner = {id(population.data_structure): population.name for population in scene.populations}
+    reads = {population.name: set() for population in scene.populations}
+    links = scene.exchanges.links
+    for cross in links:
+        receiver = owner.get(id(_underlying(cross.receiver_ds)))
+        if receiver is None:
+            continue
+        provider = owner.get(id(_underlying(cross.provider_ds)))
+        if provider is not None and provider != receiver:
+            reads[receiver].add(provider)
+        if cross.direction == "down" and cross.aggregation == "split":
+            for other in links:
+                sharing = owner.get(id(_underlying(other.receiver_ds)))
+                if (sharing not in (None, receiver) and other.direction == "down" and other.aggregation == "split"
+                        and other.provider_ds is cross.provider_ds and other.link.sources == cross.link.sources
+                        and other.link.weight == cross.link.weight):
+                    reads[receiver].add(sharing)
+    return reads
+
+
 # ── the runners ───────────────────────────────────────────────────────────
 
 class SequentialRunner:
@@ -460,7 +538,9 @@ class SequentialRunner:
     def start(self, scene) -> None:
         """Nothing to start."""
 
-    def run_populations(self, scene) -> None:
+    def run_populations(self, scene, snapshots: dict = None) -> None:
+        """Each due population run after the exchanges into it (a FixedPoint's *snapshots* taken by Scene._step's
+        hooks: the populations run here)."""
         from openalea.metafspm.solve import archetype_store
         if self._archetypes is None:
             self._archetypes = archetype_store.ArchetypeStore()
@@ -478,6 +558,15 @@ class SequentialRunner:
             scene._time("exchanges", exchanged - started)
             scene._time(population.name, perf_counter() - exchanged)
             scene._time_components(population.name, population.components)
+
+    def run_again(self, scene, bound: list, snapshots: dict) -> None:
+        """One iteration of a fixed-point coupling (Scene._iterate): the *bound* steps run again in order, from their
+        starts (*snapshots*), each after the exchanges into its model."""
+        for name, model, step in bound:
+            run_step_again(scene, name, model, step, snapshots[id(step)])
+
+    def end_iteration(self, scene) -> None:
+        """Nothing to tell: the iterated steps ran here."""
 
     def synchronize(self, scene) -> None:
         """Nothing to synchronize: the populations' DataStructures are the scene's own."""
@@ -564,6 +653,7 @@ class _Worker:
         from openalea.metafspm.solve import archetype_store
         self.scene, self.connection, self.folder = scene, connection, folder
         self.populations = [scene.populations[index] for index in indices]
+        self.snapshots = {}             # {index in the FixedPoint's bound steps: _snapshot()}: the iterated steps' starts
         # the kinds the run's processes evaluated (solve.archetype_store), each read by the others
         self.archetypes = archetype_store.ArchetypeStore(os.path.join(folder, "archetypes"))
         self.store = SharedStore(os.path.join(folder, "shared"), forked=forked, external=self.archetypes)
@@ -598,45 +688,107 @@ class _Worker:
                     return
 
     def step(self, payload: dict) -> dict:
+        """The populations of *payload* ({population name: its entry}) run, each published: an entry without "step"
+        its model's run (the step's "time", the components' balances to "reset"; with *payload*'s "iterated", the
+        start of its iterated steps kept: snapshots), an entry with "step" (an index into the FixedPoint's bound
+        steps) that step run again from its start (coupling.iteration's _restore); each after the coordinator's
+        "writes" (the exchanges into it, a user's set)."""
         from openalea.metafspm.solve import archetype_store
         scene = self.scene
+        iterated = payload.pop("iterated", False)
+        if iterated:
+            self.snapshots = {}
         results = {}
         with scene.compute.limits(), archetype_store.using(self.archetypes):
             for population in self.populations:
                 entry = payload.get(population.name)
                 if entry is None:
                     continue
-                data_structure = population.data_structure
-                writes = data_structure.__dict__.setdefault("_writes", {})
-                for name, (values, count) in entry["writes"].items():
-                    _, store, target = data_structure._find(name)
-                    if store[target].shape == values.shape:
-                        store[target][...] = values
-                    else:
-                        store[target] = values
-                    writes[target] = count
-                for index in entry["reset"]:
-                    component = population.components[index]
-                    component.__dict__.pop("_conservation", None)
-                    component.__dict__.pop("_conservation_start", None)
-                for component in population.components:
-                    component.__dict__["_clock"] = entry["time"]
-                started = perf_counter()
-                population.instance.run()
-                seconds = perf_counter() - started
-                counters = []
-                for component in population.components:
-                    counters.append((component.wall_time(reset=True) if hasattr(component, "wall_time") else None,
-                                     component.calls(reset=True) if hasattr(component, "calls") else None,
-                                     component.__dict__.get("_conservation"),
-                                     component.__dict__.get("_conservation_start")))
-                published = perf_counter()
-                publication = self.publish(population, full=False)
-                results[population.name] = {"seconds": seconds, "publication": perf_counter() - published,
-                                            "counters": counters, "published": publication}
+                if entry.get("step") is not None:
+                    results[population.name] = self._run_again(population, entry)
+                else:
+                    results[population.name] = self._run(population, entry, iterated)
         scene.compute.trim()
         timings, scene.compute._timings = scene.compute._timings, {}
         return {"populations": results, "timings": timings, "resident_MB": resident_mb()}
+
+    @staticmethod
+    def _write(population, writes: dict) -> None:
+        """The coordinator's *writes* ({name: (values, write count)}) into *population*'s DataStructure, in place, their
+        write counts kept."""
+        data_structure = population.data_structure
+        counts = data_structure.__dict__.setdefault("_writes", {})
+        for name, (values, count) in writes.items():
+            _, store, target = data_structure._find(name)
+            if store[target].shape == values.shape:
+                store[target][...] = values
+            else:
+                store[target] = values
+            counts[target] = count
+
+    def _run(self, population, entry: dict, iterated: bool) -> dict:
+        """*population*'s model run, its counters taken; with *iterated*, its iterated steps' starts kept (the
+        variables they write returned for the coordinator's copy)."""
+        from openalea.metafspm.coupling.iteration import _snapshot
+        self._write(population, entry["writes"])
+        for index in entry["reset"]:
+            component = population.components[index]
+            component.__dict__.pop("_conservation", None)
+            component.__dict__.pop("_conservation_start", None)
+        for component in population.components:
+            component.__dict__["_clock"] = entry["time"]
+        model = population.instance
+        taken = {}
+        if iterated:
+            def keep(step):
+                index = _bound_index(self.scene.coupling, step)
+                if index is not None and index not in self.snapshots:
+                    self.snapshots[index] = _snapshot(step)
+                    taken[index] = [(name, values) for _, name, values in self.snapshots[index]["variables"]]
+            model.__dict__["_before_step"] = keep
+        started = perf_counter()
+        try:
+            model.run()
+        finally:
+            model.__dict__.pop("_before_step", None)
+        seconds = perf_counter() - started
+        counters = []
+        for component in population.components:
+            counters.append((component.wall_time(reset=True) if hasattr(component, "wall_time") else None,
+                             component.calls(reset=True) if hasattr(component, "calls") else None,
+                             component.__dict__.get("_conservation"),
+                             component.__dict__.get("_conservation_start")))
+        published = perf_counter()
+        publication = self.publish(population, full=False)
+        return {"seconds": seconds, "publication": perf_counter() - published, "counters": counters,
+                "published": publication, "snapshots": taken}
+
+    def _run_again(self, population, entry: dict) -> dict:
+        """The iterated step entry["step"] of *population* run again (Scene._iterate's sweep in one process): restored
+        to its start, the coordinator's writes (the exchanges into it) written, run, published; its components'
+        balances returned."""
+        from openalea.metafspm.coupling.iteration import _restore
+        name, _, step = self.scene.coupling._bound[entry["step"]]
+        _restore(step, self.snapshots[entry["step"]], name)
+        self._write(population, entry["writes"])
+        step.run()
+        published = perf_counter()
+        publication = self.publish(population, full=False)
+        balances = [(component.__dict__.get("_conservation"), component.__dict__.get("_conservation_start"))
+                    for component in population.components]
+        return {"publication": perf_counter() - published, "balances": balances, "published": publication}
+
+    def end_iteration(self, payload=None) -> None:
+        """The iteration's end (Scene._iterate): the snapshots forgotten, the iterated runs left out of the components'
+        calls and wall times (their scene step counted once, by their model's run)."""
+        self.snapshots = {}
+        models = self.scene.coupling.models() if self.scene.coupling != "explicit" else []
+        for population in self.populations:
+            if any(population.instance is model for model in models):
+                for component in population.components:
+                    component.__dict__.pop("_ran", None)
+                    if hasattr(component, "wall_time"):
+                        component.wall_time(reset=True)
 
     @staticmethod
     def _published(data_structure, marks) -> dict:
@@ -783,27 +935,19 @@ class ProcessRunner:
         self._shared = None             # the coordinator's SharedStore reading the publications' shared parts
         self._measured = {}             # {group: {"resident_MB": last, "peak_MB": most, "seconds": its steps' total}}
         self._balance = []              # each step's slowest group's time over the groups' mean
+        self._reads = {}                # {population name: the populations the exchanges into it read} (_rounds)
 
     # ── start, stop ──
 
     def check(self, scene) -> None:
-        """What a ProcessRunner cannot run, refused naming it: a fixed point coupling (phase B6), a link between two
-        populations, an environment model's component on a population's own DataStructure, a device but the cpu, a
-        platform without fork."""
-        from openalea.metafspm.coupling.translator import link_pairs
-        if scene.coupling != "explicit":
-            raise ValueError("Compute(processes>1) needs coupling='explicit': a FixedPoint across processes is not "
-                             "available yet (route B, phase B6); use processes=1")
+        """What a ProcessRunner cannot run, refused naming it: an environment model's component on a population's own
+        DataStructure, a device but the cpu, a platform without fork."""
         if not hasattr(os, "fork"):
             raise ValueError(f"Compute(processes>1) forks its workers (Linux, macOS); {sys.platform} has no fork: "
                              "use processes=1")
         if scene.compute.device != "cpu":
             raise ValueError("Compute(processes>1) runs on the cpu only (a device's context does not survive a fork): "
                              "use processes=1 with device='cuda'")
-        owner = {}
-        for population in scene.populations:
-            for component in population.components:
-                owner[id(component)] = population.name
         own = {id(population.data_structure): population.name for population in scene.populations}
         for model in scene.environment:
             for component in model.components:
@@ -813,13 +957,6 @@ class ProcessRunner:
                     raise ValueError(f"Compute(processes>1): {type(model).__name__}.{type(component).__name__} works on "
                                      f"population {own[id(base)]}'s own DataStructure, which its worker owns: use "
                                      "processes=1 (or run it on the plants' union)")
-        for link in scene.translator.links:
-            for receiver, provider in link_pairs(link, scene.components):
-                ends = {owner.get(id(receiver)), owner.get(id(provider))} - {None}
-                if len(ends) > 1:
-                    raise ValueError(f"Compute(processes>1): the link {link.receiver}.{link.variable} <- "
-                                     f"{link.provider} joins populations {sorted(ends)} within the step: use "
-                                     "processes=1")
 
     def start(self, scene) -> None:
         """The workers forked (once, at the scene's first step: after its build, a restore and the numba kernels'
@@ -846,6 +983,7 @@ class ProcessRunner:
         self._shared = SharedStore(os.path.join(self._folder, "shared"), forked=forked, external=self._archetypes)
         for population in scene.populations:
             self._synced[population.name] = _write_counts(population.data_structure)
+        self._reads = population_reads(scene)
         handles = []
         for group, (indices, cores) in enumerate(zip(self.plan["groups"], self.plan["worker_cores"])):
             parent_end, child_end = Pipe()
@@ -924,36 +1062,107 @@ class ProcessRunner:
                            f"{exit_status}{killed}; {memory}; the last checkpoint: "
                            f"{checkpoint if checkpoint else 'none'}")
 
-    def run_populations(self, scene) -> None:
+    def run_populations(self, scene, snapshots: dict = None) -> None:
+        """The due populations run in their workers, in rounds (_rounds), each published and loaded into its copy;
+        with *snapshots* (a FixedPoint's step: Scene._step), the starts of their iterated steps kept in the workers and
+        the variables those write put in *snapshots* (by the coordinator's step: its copy's)."""
+        tasks = [(population, None) for population in scene.populations if scene._due(population.instance)]
+        for round_tasks in self._rounds(tasks):
+            self._run_round(scene, round_tasks, snapshots)
+        started = perf_counter()
+        self._retain_parts()
+        scene._time("publication", perf_counter() - started)
+
+    def run_again(self, scene, bound: list, snapshots: dict) -> None:
+        """One iteration of a fixed-point coupling (Scene._iterate): the *bound* steps run again in order, from their
+        starts (*snapshots*), each after the exchanges into its model; the environment's in the coordinator, a run of
+        consecutive populations' steps in their workers, in rounds."""
+        populations = {id(population.instance): population for population in scene.populations}
+        pending = []
+        for name, model, step in bound:
+            population = populations.get(id(model))
+            if population is not None:
+                pending.append((population, _bound_index(scene.coupling, step)))
+                continue
+            for round_tasks in self._rounds(pending):
+                self._run_round(scene, round_tasks, snapshots)
+            pending = []
+            run_step_again(scene, name, model, step, snapshots[id(step)])
+        for round_tasks in self._rounds(pending):
+            self._run_round(scene, round_tasks, snapshots)
+        self._retain_parts()
+
+    def end_iteration(self, scene) -> None:
+        """The workers told the iteration ended (_Worker.end_iteration)."""
+        for handle in self._handles:
+            handle["connection"].send(("end_iteration", None))
+        for handle in self._handles:
+            self._receive(scene, handle)
+
+    def _rounds(self, tasks: list) -> list:
+        """*tasks* ([(population, its bound step's index or None: its model's run)], in their order in one process)
+        in rounds, each a list of tasks run at once: a task after the publication of every earlier task of its own
+        population or of a population the exchanges into it read (self._reads), and not before the exchanges into an
+        earlier task reading its population (in the same round at the earliest)."""
+        levels = []
+        for k, (population, _) in enumerate(tasks):
+            level = 0
+            for (earlier, _), earlier_level in zip(tasks[:k], levels):
+                if earlier is population or earlier.name in self._reads[population.name]:
+                    level = max(level, earlier_level + 1)
+                elif population.name in self._reads[earlier.name]:
+                    level = max(level, earlier_level)
+            levels.append(level)
+        return [[task for task, level in zip(tasks, levels) if level == round_level]
+                for round_level in sorted(set(levels))]
+
+    def _run_round(self, scene, tasks: list, snapshots: dict) -> None:
+        """One round of *tasks* (_rounds): the exchanges into each population (a step run again: its copy's written
+        variables restored first), the step messages to the workers, their publications loaded, their counters
+        taken."""
+        from openalea.metafspm.scene.scene import _own_data_structures
         payloads = [{} for _ in self._handles]
-        due = []
-        for handle, payload in zip(self._handles, payloads):
-            for index in handle["populations"]:
-                population = scene.populations[index]
-                if not scene._due(population.instance):
-                    continue
-                started = perf_counter()
+        group_of = {index: group for group, handle in enumerate(self._handles) for index in handle["populations"]}
+        positions = {population.name: index for index, population in enumerate(scene.populations)}
+        for population, step_index in tasks:
+            payload = payloads[group_of[positions[population.name]]]
+            started = perf_counter()
+            if step_index is None:
                 scene.exchanges.exchange(into=population.data_structure)
-                scene._time("exchanges", perf_counter() - started)
                 payload[population.name] = {"writes": self._written(population), "time": scene.time,
                                             "reset": [k for k, component in enumerate(population.components)
                                                       if "_conservation" not in component.__dict__]}
-                due.append(population)
-        for handle, payload in zip(self._handles, payloads):
+                if snapshots is not None:
+                    payload["iterated"] = True
+            else:
+                step = scene.coupling._bound[step_index][2]
+                for root, name, values in snapshots[id(step)]["variables"]:
+                    _, store, target = root._find(name)      # as _restore does, not counted as a write
+                    store[target][...] = values
+                for data_structure in _own_data_structures(population.instance):
+                    scene.exchanges.exchange(into=data_structure)
+                payload[population.name] = {"writes": self._written(population), "step": step_index}
+            scene._time("exchanges", perf_counter() - started)
+        busy = [(handle, payload) for handle, payload in zip(self._handles, payloads) if payload]
+        for handle, payload in busy:
             try:
                 handle["connection"].send(("step", payload))
             except (OSError, ValueError):
                 self._died(scene, handle)
-        replies = [self._receive(scene, handle) for handle in self._handles]
+        replies = [(handle, self._receive(scene, handle)) for handle, _ in busy]
         by_name = {population.name: population for population in scene.populations}
         group_seconds = []
-        for handle, reply in zip(self._handles, replies):
+        for handle, reply in replies:
             seconds = 0.
             for name, result in reply["populations"].items():
                 population = by_name[name]
                 started = perf_counter()
                 self._load(population, result["published"])
                 scene._time("publication", perf_counter() - started + result["publication"])
+                if "balances" in result:                     # a step run again: its components' balances only
+                    for component, balance in zip(population.components, result["balances"]):
+                        _set_balance(component, *balance)
+                    continue
                 scene._time(name, result["seconds"])
                 seconds += result["seconds"]
                 for component, (wall_time, calls, conservation, conservation_start) in zip(population.components,
@@ -963,12 +1172,10 @@ class ProcessRunner:
                         scene._time(key, wall_time)
                     if calls is not None:
                         scene.calls[key] = scene.calls.get(key, 0) + calls
-                    for attribute, value in (("_conservation", conservation),
-                                             ("_conservation_start", conservation_start)):
-                        if value is None:
-                            component.__dict__.pop(attribute, None)
-                        else:
-                            component.__dict__[attribute] = value
+                    _set_balance(component, conservation, conservation_start)
+                for index, variables in result["snapshots"].items():
+                    snapshots[id(scene.coupling._bound[index][2])] = _copy_snapshot(scene.coupling._bound[index][2],
+                                                                                    variables)
             for name, entry in reply["timings"].items():          # the workers' kernels and solvers, merged by name
                 merged = scene.compute._timings.setdefault(name, {"seconds": 0., "calls": 0})
                 merged["seconds"] += entry["seconds"]
@@ -976,23 +1183,26 @@ class ProcessRunner:
                 for threads, calls in entry.get("threads", {}).items():
                     counts = merged.setdefault("threads", {})
                     counts[threads] = counts.get(threads, 0) + calls
-            measured = self._measured.setdefault(handle["group"], {"resident_MB": None, "peak_MB": 0., "seconds": 0.})
-            measured["seconds"] += seconds
-            if reply["resident_MB"] is not None:
-                measured["resident_MB"] = reply["resident_MB"]
-                measured["peak_MB"] = max(measured["peak_MB"], reply["resident_MB"])
-                predicted = self.plan["predicted_MB_per_process"][handle["group"]]
-                if reply["resident_MB"] > 1.5 * predicted and not measured.get("warned"):
-                    measured["warned"] = True
-                    warnings.warn(f"the worker of {self._label(scene, handle)} holds {reply['resident_MB']:.0f} MB, "
-                                  f"over 1.5x its {predicted} MB prediction (runner.PER_PLANT_MB per plant): give "
-                                  "fewer processes on a larger scene", ResourceWarning, stacklevel=2)
-            group_seconds.append(seconds)
-        if group_seconds and sum(group_seconds) > 0:
+            self._measure(scene, handle, reply)
+            if seconds:
+                self._measured[handle["group"]]["seconds"] += seconds
+                group_seconds.append(seconds)
+        if len(group_seconds) > 1:
             self._balance.append(max(group_seconds) / (sum(group_seconds) / len(group_seconds)))
-        started = perf_counter()
-        self._retain_parts()
-        scene._time("publication", perf_counter() - started)
+
+    def _measure(self, scene, handle, reply: dict) -> None:
+        """A worker's resident memory from *reply* kept (its last, its peak), a warning above 1.5x its prediction."""
+        measured = self._measured.setdefault(handle["group"], {"resident_MB": None, "peak_MB": 0., "seconds": 0.})
+        if reply["resident_MB"] is None:
+            return
+        measured["resident_MB"] = reply["resident_MB"]
+        measured["peak_MB"] = max(measured["peak_MB"], reply["resident_MB"])
+        predicted = self.plan["predicted_MB_per_process"][handle["group"]]
+        if reply["resident_MB"] > 1.5 * predicted and not measured.get("warned"):
+            measured["warned"] = True
+            warnings.warn(f"the worker of {self._label(scene, handle)} holds {reply['resident_MB']:.0f} MB, "
+                          f"over 1.5x its {predicted} MB prediction (runner.PER_PLANT_MB per plant): give "
+                          "fewer processes on a larger scene", ResourceWarning, stacklevel=3)
 
     def _load(self, population, publication: dict) -> None:
         referred = load_publication(population.data_structure, os.path.join(self._folder, population.name),

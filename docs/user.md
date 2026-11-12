@@ -1310,8 +1310,12 @@ scene.population("wheat3").data_structure.get("psi")        # the scene process'
   over a day of use case 1, the step equal or faster, the same bits). `run.json` records the placement under `"processes"` (groups, core sets,
   threads, memory budget, predicted and measured memory per worker, the balance: the slowest group's time over the
   mean), and the time of the publications (`"timing"` `"publication"`).
-- Limits: Linux and macOS (fork), the cpu, `coupling="explicit"` (a FixedPoint across processes is a later phase); a
-  link between two populations, or an environment model working on a population's own DataStructure, keeps
+- A fixed-point coupling (`coupling=FixedPoint(...)`) runs across processes: the populations' iterated steps run
+  again in their workers, the soil's or the light's in the scene's process, the convergence tested there: the same
+  iterations, warnings and errors (a non-finite iterate's FloatingPointError) as in one process, the same bits.
+- A link between two populations (one reading the other within the step) runs across processes too: a population
+  waits for the populations before it that it reads (the step then runs in rounds), as in one process.
+- Limits: Linux and macOS (fork), the cpu; an environment model working on a population's own DataStructure keeps
   `processes=1` (refused, named).
 - Failures: a worker's death (killed, out of memory) ends the run with a RuntimeError naming its group, its plants,
   the step, its last memory and the last checkpoint (run.json "failed"); an exception in a worker is raised again in

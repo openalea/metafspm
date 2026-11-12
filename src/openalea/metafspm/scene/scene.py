@@ -600,7 +600,7 @@ class Scene:
             self._time("exchanges", exchanged - started)
             self._time(type(model).__name__, perf_counter() - exchanged)
             self._time_components(type(model).__name__, model.components)
-        self.runner.run_populations(self)           # each after the exchanges into it (scene.runner)
+        self.runner.run_populations(self, snapshots if iterated else None)   # each after the exchanges into it
         if iterated:
             self._iterate(snapshots)
         self.time += self.time_step
@@ -612,23 +612,17 @@ class Scene:
 
     def _iterate(self, snapshots: dict) -> None:
         """A fixed-point coupling's iterations (coupling.iteration): the iterated steps run again from their start,
-        after the exchanges into their models, until what they write no longer changes."""
-        from openalea.metafspm.coupling.iteration import (_restore, check_finite, converged, values,
-                                                          warn_not_converged)
+        after the exchanges into their models (the runner's run_again: the populations' in their workers), until what
+        they write no longer changes."""
+        from openalea.metafspm.coupling.iteration import check_finite, converged, values, warn_not_converged
         coupling = self.coupling
         for model in coupling.models():
             model.__dict__.pop("_before_step", None)
         bound = [entry for entry in coupling._bound if id(entry[2]) in snapshots]
-        names = {id(model): name for name, model in [(type(model).__name__, model) for model in self.environment]
-                 + [(population.name, population.instance) for population in self.populations]}
         before, done = values(bound), 0
         started = perf_counter()
         for _ in range(coupling.max_iterations):
-            for name, model, step in bound:
-                _restore(step, snapshots[id(step)], name)
-                for data_structure in _own_data_structures(model):
-                    self.exchanges.exchange(into=data_structure)
-                step.run()
+            self.runner.run_again(self, bound, snapshots)
             done += 1
             after = values(bound)
             if converged(before, after, coupling.relative_tolerance, coupling.absolute_tolerance):
@@ -639,6 +633,7 @@ class Scene:
             warn_not_converged(coupling, self.time)
             self.coupling_iterations["not_converged"] += 1
         self._time("coupling iterations", perf_counter() - started)
+        self.runner.end_iteration(self)
         for _, model, _ in bound:
             for component in model.components:
                 component.__dict__.pop("_ran", None)        # its scene step counted once (its model's run)
