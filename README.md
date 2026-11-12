@@ -2,7 +2,7 @@
 [![Anaconda-Server Badge](https://anaconda.org/openalea3/openalea.metafspm/badges/license.svg)](https://anaconda.org/openalea3/openalea.metafspm)
 
 [![Build Status](https://github.com/openalea/metafspm/actions/workflows/conda-build.yml/badge.svg?branch=main)](https://github.com/openalea/metafspm/actions/workflows/conda-build.yml?query=branch%3Amain)
-[![Docs](https://readthedocs.org/projects/metafspm/badge/?version=latest)](https://metafspm.readthedocs.io/)
+[![Docs](https://app.readthedocs.org/projects/metafspm/badge/?version=latest)](https://metafspm.readthedocs.io/)
 
 [![Anaconda-Server Badge](https://anaconda.org/openalea3/openalea.metafspm/badges/version.svg)](https://anaconda.org/openalea3/openalea.metafspm)
 [![Anaconda-Server Badge](https://anaconda.org/openalea3/openalea.metafspm/badges/platforms.svg)](https://anaconda.org/openalea3/openalea.metafspm)
