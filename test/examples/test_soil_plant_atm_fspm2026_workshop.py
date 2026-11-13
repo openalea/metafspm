@@ -12,12 +12,13 @@ import pytest
 pytest.importorskip("matplotlib")
 EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "soil_plant_atm_fspm2026_workshop")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
+sys.modules.pop("models", None)   # use_case_1's models.py, if its test was collected first in this process
 
 import one_plant                                                                     # noqa: E402
 import scenario_to_outputs                                                           # noqa: E402
 import one_plant_adaptative                                                          # noqa: E402
 import population                                                                    # noqa: E402
-from models import AdaptiveSoil, Soil                                                 # noqa: E402
+from models import SCENE_TRANSLATOR, AdaptiveSoil, SeedlingWater, Soil                # noqa: E402
 
 FIGURES = ("plant_segments.png", "plant_segments_soil.png", "plant_anatomy.png", "plant_anatomy_soil.png",
            "anatomy_types.png", "soil_slice.png", "soil_slice_anomaly.png",
@@ -107,7 +108,6 @@ def test_a_scene_from_the_tables_column_is_the_tutorials_scene(tmp_path):
     from openalea.metafspm.scene.population import Planting
     from openalea.metafspm.scene.scenarios import read_scenarios
     from openalea.metafspm.scene.scene import Scene
-    from models import SCENE_TRANSLATOR, SeedlingWater
     scenario = read_scenarios(os.path.join(EXAMPLE, "scenarios", "scenarios.csv"))["dry"]
     built = Scene.from_scenario(scenario, [Planting(x=0.1, y=0.1)], SeedlingWater, environment=[Soil], x_range=0.2,
                                 y_range=0.2, translator=SCENE_TRANSLATOR, time_step=3600)
