@@ -73,14 +73,6 @@ dev = [
   "pytest >=6",
   "pytest-cov >=3",
 ]
-doc = [
-  "pydata-sphinx-theme",
-  "myst-parser",
-  "sphinx-favicon",
-  "sphinx-copybutton",
-  "nbsphinx",
-  "ipykernel",
-]
 
 # optional sparse solvers of the graph systems' linear steps, registered when importable (Compute(linear_solver=));
 # python-mumps has no wheel: conda install -c conda-forge python-mumps (pip builds MUMPS from source)
