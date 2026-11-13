@@ -10,7 +10,9 @@ meta = metadata('openalea.' + project)
 release = meta.get("version")
 # for example take major/minor
 version = ".".join(release.split('.')[:3])
-author = meta['Author-email'].split(' <')[0]
+authors_with_email = [entry.split(' <')[0] for entry in meta['Author-email'].split(', ')]
+authors_without_email = [meta.get('Author')] if meta.get('Author') else []
+author = ', '.join(authors_with_email + authors_without_email)
 desc = meta['Summary']
 urls = {k:v for k,v in [item.split(',') for item in meta.get_all('Project-URL')]}
 
@@ -117,7 +119,7 @@ html_context = {
     "github_user": "openalea",
     "github_repo": "metafspm",
     "github_version": "main",
-    "doc_path": "docs",
+    "doc_path": "doc",
 }
 
 # -- Options for LaTeX output ---------------------------------------------

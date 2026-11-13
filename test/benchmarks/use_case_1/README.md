@@ -113,7 +113,7 @@ is the run's process alone. Recorded (`benchmark.py --frames`: a frame a day, p0
 drawn as instances), 8 plants to day 8 take 357 s (334 s unrecorded), the frames 1.1 MB at the sowing to 25 MB at day
 8 (about 0.45 kB per node), the parts 81 MB (77 files), the folder 176 MB.
 On a machine with an NVIDIA GPU and CuPy, `benchmark.py --device cuda` runs the archetypes' Kron reductions and the
-linear solves on the device (metafspm's docs/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
+linear solves on the device (metafspm's doc/gpu.md, "Running on a GPU": what is offloaded, how to compare it with
 the CPU run, the transfers in the entry's `device`). The GPU path is experimental: it should work on suitable
 hardware but has not been tested on a GPU yet (no GPU on the development laptop), and its results would agree with
 the CPU's within round-off, not bit for bit.

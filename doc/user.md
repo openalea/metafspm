@@ -948,7 +948,7 @@ time (an event's, a planting time) is a duration since time 0 or a date (`"2026-
   `description`, ...) are skipped, empty cells leave the defaults, `forcing` rows read their CSV, and a `model`
   column nests the entries by model. `parameter_table(*components, main=)` lists the parameters with their units,
   descriptions and declared bounds. `variants(base, ranges, design="grid" | "one_at_a_time" | "sampling",
-  declared=components)` builds scenarios within the declared `min_value` / `max_value`. `docs/tutorial.md` goes
+  declared=components)` builds scenarios within the declared `min_value` / `max_value`. `doc/tutorial.md` goes
   through the whole path.
 - **Exchange with other platforms.** `openalea.metafspm.io.encoding3d` writes a scene, or chosen DataStructures, as an
   [encoding3d](https://github.com/openalea/encoding3d) frame: one glTF file that glTF viewers display. CPlantBox,

@@ -1,6 +1,6 @@
 # Design note: structure, growth, active sets and boundaries (step 2)
 
-> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see docs/). It is kept for the reasoning, not as a reference.
+> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see doc/). It is kept for the reasoning, not as a reference.
 
 Status: **agreed** (2026-10-02, P1–P7 answered in §8). 2a done (`4fbe3dc`), 2b done (`e659bd0`), 2c done (`6430b08`), 2d done (`9e0b00b`), 2e done (`3ffb485`), 2f done: **step 2 complete**, with the points listed at the end of §7. It covers step 2 of `devplan_datastructures.md` §7:
 - DS2: traversal orders;
@@ -12,7 +12,7 @@ Status: **agreed** (2026-10-02, P1–P7 answered in §8). 2a done (`4fbe3dc`), 2
 
 Branch `data_structure_api`, written against `a987cba` (step 1 complete). Code starts only after this note is agreed. The points to agree are in §8.
 
-It builds on decisions D11 (the MPG is the source of truth), D12 (conditional rewiring), D13 (sync around structural steps), D14 (repartition), D15 (active mask) and D16 (active subgraph opt-in), and on the step 1 contract (`datastructure_contract.md`, `docs/conventions.md`).
+It builds on decisions D11 (the MPG is the source of truth), D12 (conditional rewiring), D13 (sync around structural steps), D14 (repartition), D15 (active mask) and D16 (active subgraph opt-in), and on the step 1 contract (`datastructure_contract.md`, `doc/conventions.md`).
 
 ## 1. Where we start from (code facts)
 

@@ -1,6 +1,6 @@
 # Design note: the DataStructure variable contract (step 1)
 
-> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see docs/). It is kept for the reasoning, not as a reference.
+> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see doc/). It is kept for the reasoning, not as a reference.
 
 Status: **under review**. N1–N5 are agreed (2026-10-02). 1a done (`4d1353d`), 1b done (`15f8976`), 1c done (`cc3e588`), 1d done (`bf008e3`), 1e done (`bc37e79`), 1f done: **step 1 complete**. It covers step 1 of `devplan_datastructures.md` §7: DS3 (locations and scale mapping), DS17 (derived variables resolved at read), DS5 (output locations), DS11 (validation) and DS16 (conventions).
 Branch `data_structure_api`, written against `1bf8356`. Code starts only after this note is agreed. The open points are in §8.
@@ -157,7 +157,7 @@ total_N:       float = state_variable(..., location="scalar")
 
 ## 7. Conventions page (DS16)
 
-Add `docs/conventions.md`, linked from the README and from `downstream_migration.md`. It covers:
+Add `doc/conventions.md`, linked from the README and from `downstream_migration.md`. It covers:
 - the incidence sign: +1 at the parent end of an edge, −1 at the child;
 - the local order: Compartment post-order from population, not sorted. Use `entity_ids` / `index_of`, never positions (D8);
 - grids: axes are `(x, y, z)`, and `locate` / `cell_centers` work in that order;
@@ -208,7 +208,7 @@ Each step lands with its tests. The existing suite passes at every step: 516 tes
 | 1c | Write counters, lazy derived variables, read-only derived (N3), the `pull_available_inputs` check | `test_lazy_derived.py`: stale after a source `set`, fresh at `get`; chains of derivations; aliases of derived variables; no recomputation when nothing changed (call counts); `set` on derived raises; the existing composite tests unchanged |
 | 1d | Output locations, filtered slicing by location | `test_output_locations.py`: n == m graph with node and edge outputs; undeclared output without location raises when ambiguous and warns when unambiguous; a scalar argument in a filtered evaluator |
 | 1e | `validate()`, raising on missing names and filters, edge BCs rejected, `from_scale` inferred | `test_validation.py`: each failure mode raises with its message; `validate(strict=True)` detects a write through a view |
-| 1f | `docs/conventions.md`, CHANGELOG, `downstream_migration.md` §2 updated for the new keys | a documentation test: every location and mapping name in the page exists in the code |
+| 1f | `doc/conventions.md`, CHANGELOG, `downstream_migration.md` §2 updated for the new keys | a documentation test: every location and mapping name in the page exists in the code |
 
 **Risks:**
 - Tests may rely on silent zeros (1e) or on size inference (1d). They will show up as failures and be fixed one by one in the tests, never by keeping the silent path.

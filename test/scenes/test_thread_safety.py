@@ -1,5 +1,5 @@
 """
-The module-level state shared by a process's threads, made per context (docs/conventions.md, "Threads and forks"):
+The module-level state shared by a process's threads, made per context (doc/conventions.md, "Threads and forks"):
 two populations' steps run in two threads at once give the results of the sequential steps, bit for bit (a reduction's
 archetype extraction in one thread no longer strips the other's boundary sets: "piece has no Dirichlet anchor");
 Compute.current(), the extraction flag and the skipped systems are each thread's own; the shared positions' cache hits
