@@ -59,7 +59,7 @@ Ports coming next, not available yet (the component, and the model it is ported 
 None of them is on the `openalea3` channel in these versions yet (Adel's and Caribu's packages there are the original
 models, without these components): clone each one on its branch next to metafspm and install both with
 `pip install -e`, in the environment of the package's `conda/environment.y(a)ml` (mamba, from `openalea3` and
-`conda-forge`). The steps for each package are in [metafspm in five minutes](docs/five_minutes.md#installing-them),
+`conda-forge`). The steps for each package are in [metafspm in five minutes](doc/five_minutes.md#installing-them),
 which also explains metafspm's core ideas in plain words through use case 1: components, plant models, links, the
 scene and its step, the recorder.
 
@@ -136,12 +136,12 @@ carbon()                                                 # one time step, steps 
 Coupled equations (transport, diffusion) are declared as `@graph_system`s and solved on the graph; components are
 coupled within a DataStructure by a `CompositeModel` and its translator, and across DataStructures (plants and soil
 grids, light, environment) by mappings; a `Scene` builds populations from a planting table and runs them with their
-environment. See the documentation in `docs/`: the user guide (`docs/user.md`), the declaration conventions
-(`docs/conventions.md`) and the guide for porting an existing model (`docs/migration.md`).
+environment. See the documentation in `doc/`: the user guide (`doc/user.md`), the declaration conventions
+(`doc/conventions.md`) and the guide for porting an existing model (`doc/migration.md`).
 
 A simulation follows one path: a scenario table (`read_scenarios`), `planting`, a `Scene` with its `forcings=` and
 a `SceneRecorder`, `simulate`, then the outputs read back (`run.json`, the `summaries/Plant/` and `summaries/Soil/` tables, the
-frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](docs/tutorial.md)
+frames), and `variants` of a scenario within the declared bounds. [From a scenario to its outputs](doc/tutorial.md)
 goes through it on a seedling in a soil column
 (`examples/soil_plant_atm_fspm2026_workshop/scenario_to_outputs.py`).
 
@@ -152,7 +152,7 @@ it should work on suitable hardware but has not been tested on a GPU yet), the m
 back after each step) and the graph systems' sparse solver (`linear_solver="superlu_reuse"`, say, for every system;
 a mapping such as `{"default": "superlu", "symmetric": "cholmod"}` gives each system its own, by its qualified name
 `"Component._system"`, else a property it declares, else `"default"`). `scene.timing` gives the time per model and per component.
-See the user guide's *Performance notes* and [Running on a GPU](docs/gpu.md), which also covers repeated runs
+See the user guide's *Performance notes* and [Running on a GPU](doc/gpu.md), which also covers repeated runs
 (`run_variants`).
 
 For a model built on MetaFSPM, see [Root_CyNAPS](https://github.com/GeraultTr/Root_CyNAPS).

@@ -115,7 +115,7 @@ class CompositeModel:
         for component in self.components:
             if _live_data_structure(component) is None:
                 raise TypeError(f"{type(component).__name__} is not DataStructure-backed: props-based components were "
-                                "removed, see docs/migration.md")
+                                "removed, see doc/migration.md")
         self.translator = Translator.load(translator if translator is not None else type(self).translator)
         self._couple_on_data_structures(self.translator)
         checked = []

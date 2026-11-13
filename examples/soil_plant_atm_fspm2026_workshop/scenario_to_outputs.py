@@ -1,5 +1,5 @@
 """
-metafspm's one path, from a scenario table to the outputs read back (docs/tutorial.md walks through it):
+metafspm's one path, from a scenario table to the outputs read back (doc/tutorial.md walks through it):
 
     python scenario_to_outputs.py [output folder]
 

@@ -2,7 +2,7 @@
 Compute(device="cuda") without a GPU: the backend's dispatch, its transfers and its results against the cpu path,
 on a fake CuPy (fake_cupy: numpy under cupy's interface, its device arrays refused by numpy, every crossing logged).
 CuPy itself is optional and absent here: nothing imports it unless device="cuda", and a scene asking for it without
-it, or without a device, raises at its build with the install line. GPU runs are by hand (docs/gpu.md).
+it, or without a device, raises at its build with the install line. GPU runs are by hand (doc/gpu.md).
 """
 import subprocess
 import sys

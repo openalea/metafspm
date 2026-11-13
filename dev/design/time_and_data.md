@@ -1,6 +1,6 @@
 # Design note: time loops, MTG sync, solve-time data and typed variables (step 4)
 
-> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see docs/). It is kept for the reasoning, not as a reference.
+> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see doc/). It is kept for the reasoning, not as a reference.
 
 Status: **agreed** (2026-10-02: "Go on with step 4", taken as agreement with the recommendations T1–T7; the answer lines were left empty). 4a done (`6bfcaf7`), 4b done (`c254840`), 4c done: **step 4 complete**. It covers step 4 of `devplan_datastructures.md` §7:
 - DS10: graph systems with their own time loop and sub-stepping;

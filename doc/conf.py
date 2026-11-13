@@ -117,7 +117,7 @@ html_context = {
     "github_user": "openalea",
     "github_repo": "metafspm",
     "github_version": "main",
-    "doc_path": "docs",
+    "doc_path": "doc",
 }
 
 # -- Options for LaTeX output ---------------------------------------------

@@ -494,7 +494,7 @@ def _live_ds(instance):
     data_structure = getattr(instance, "data_structure", None)
     if data_structure is None or not (hasattr(data_structure, "register") and hasattr(data_structure, "get")):
         raise TypeError(f"{type(instance).__name__}: graph systems need a DataStructure with a variable store "
-                        "(props-based components were removed, see docs/migration.md)")
+                        "(props-based components were removed, see doc/migration.md)")
     return data_structure
 
 

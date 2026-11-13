@@ -1,6 +1,6 @@
 # Design note: coupling components through DataStructure variables
 
-> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see docs/). It is kept for the reasoning, not as a reference.
+> **Historical.** This note records a design decision as it was made; the API it describes has changed since (see doc/). It is kept for the reasoning, not as a reference.
 
 Status: **draft for review** (devplan WD.0 + WD.1). Branch `release2026`, written against `a3a9877`.
 Code changes (WD.P, WD.2–WD.9) start only after this note is accepted. The open decisions are listed in §11.

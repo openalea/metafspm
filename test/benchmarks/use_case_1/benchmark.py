@@ -26,7 +26,7 @@ time and memory, then each step's: a resumed run evaluates no archetype again); 
 solver; the threads chosen recorded, "threads", and each kernel's, solver's and step's
 (functor.<Class>.<step>) time, per step and in all, "kernels"),
 --device its device (cuda: the archetypes' Kron
-reductions and the linear solves on the GPU, CuPy needed, docs/gpu.md; the device's transfers recorded at the end,
+reductions and the linear solves on the GPU, CuPy needed, doc/gpu.md; the device's transfers recorded at the end,
 "device"), and the memory of the process's control group (run it in its own systemd-run --scope), now and at its
 peak. --variability gives each plant its own seeded root draws (plant_variability: ArchiSimple's
 random_choice; identical plants share every archetype, which flatters a scaling); --frames records the run (a frame every

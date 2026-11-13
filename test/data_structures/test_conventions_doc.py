@@ -1,5 +1,5 @@
 """
-docs/conventions.md is checked against the code: its tables of
+doc/conventions.md is checked against the code: its tables of
 locations, mappings and default mappings must name exactly what the declaration resolver implements.
 """
 import os
@@ -10,7 +10,7 @@ import pytest
 from openalea.metafspm.coupling import declaration
 from openalea.metafspm.coupling.declaration import DeclarationError, default_aggregation
 
-PAGE = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "conventions.md")
+PAGE = os.path.join(os.path.dirname(__file__), "..", "..", "doc", "conventions.md")
 
 
 def _table(header: str) -> list:

@@ -7,7 +7,7 @@ Scene maps the populations' segments onto the cells (CrossMapping) and exchanges
 fixed points: the plants' exudation and uptake go up into the cells, the soil's concentrations, water potential and
 temperature go down to the segments. No queues, handshakes or per-plant coupling.
 
-Not runnable here: the soil component lives in its package, which must first be ported (docs/migration.md).
+Not runnable here: the soil component lives in its package, which must first be ported (doc/migration.md).
 """
 from openalea.rhizosoil.soil_component_coupled import SoilModel
 
