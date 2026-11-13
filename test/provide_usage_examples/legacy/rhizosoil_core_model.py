@@ -963,7 +963,7 @@ class SoilModel(Model):
         """
         Water and solute transport based on the CMF model
         """
-        rain_intensity = self.voxels["rain_intensity"][0, 0, 0] * 24 # mm.day-1 are used by cmf : https://philippkraft.github.io/cmf/cmf_tut_meteostation.html?utm_source=chatgpt.com
+        rain_intensity = self.voxels["rain_intensity"][0, 0, 0] * 24 # mm.day-1 are used by cmf : https://philippkraft.github.io/cmf/cmf_tut_meteostation.html
         mineral_N_fertilization_amount = self.voxels["mineral_N_fertilization_rate"][0, 0, 0] * self.time_step # gN
         fertilization_volume = self.scene_xrange * self.scene_yrange * rain_intensity / 24 / 1e3 # m3 for current hour, # NOTE should be included in rain input time series
         fertigation_no3 = mineral_N_fertilization_amount / fertilization_volume if fertilization_volume > 0. else 0.
