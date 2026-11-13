@@ -29,6 +29,7 @@ from openalea.metafspm import Planting, planting, Scene, SceneRecorder
 EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "use_case_1")
 sys.path.insert(0, os.path.abspath(EXAMPLE))
 
+sys.modules.pop("models", None)   # the workshop's models.py, if its test was collected first in this process
 from component import RichardsSoilModel                                               # noqa: E402
 from models import (FRAME_VARIABLES, PLANT_TRANSLATOR, SCENE_TRANSLATOR, WATER_TABLES, WHEAT_SCENARIO,  # noqa: E402
                     WheatPlant)
