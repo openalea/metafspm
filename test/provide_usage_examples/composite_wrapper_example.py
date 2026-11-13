@@ -6,7 +6,7 @@ model receives its MPGDataStructure and builds its parts on it. Links between th
 CompositeModel's translator (aliases and derived variables on the shared DataStructure); exchanges with the soil
 and the light model are the Scene's, through the scene translator. No queues, shared memory or MTG conversions.
 
-Not runnable here: the components live in their packages, which must first be ported (docs/migration.md).
+Not runnable here: the components live in their packages, which must first be ported (doc/migration.md).
 """
 import os
 

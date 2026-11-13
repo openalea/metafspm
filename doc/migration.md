@@ -61,7 +61,7 @@ model = RootCNUnified(data_structure=MPGDataStructure(mtg, from_scale=mtg.scales
 ```
 
 The rules:
-- **Every coupled or solved variable declares where it lives** (`docs/conventions.md`), and is then registered on the DataStructure automatically:
+- **Every coupled or solved variable declares where it lives** (`doc/conventions.md`), and is then registered on the DataStructure automatically:
   - `scale=`: its MTG scale (e.g. `scales.SubOrgan`), read at registration and written back (lazily, when the MTG is read);
   - `location=`: where it is stored, defaulting to the location of its scale. Use `"edge"` for edge variables, `"node"` / `"edge"` / `"scalar"` / `"cell"` for solver-only variables, or a scale name;
   - `aggregation=`: when the scale and the location differ. `broadcast` and `split` go down; `sum` / `mean` / `weighted_mean` go up; `child` / `parent` / `mean` go to edges (the former `edge_mapping="proximal"` becomes `location="edge", aggregation="child"`). Without it, the aggregation follows the variable's `kind=` (the former `state_variable_type=`) where unambiguous.
@@ -227,7 +227,7 @@ raises ValueError at the Compute; run.json's provenance records the checks under
 
 ## 9. The plant order (route B, B1)
 
-Scene-level sums over plants follow the planting table (docs/conventions.md, "The plant order"): the results of a
+Scene-level sums over plants follow the planting table (doc/conventions.md, "The plant order"): the results of a
 scene of several plants change once by round-off (≤ 3e-15 relative on use case 1), then the layouts of its plants in
 populations give the same bits. Stored reference values of multi-plant scene sums are regenerated once.
 

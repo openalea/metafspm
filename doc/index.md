@@ -52,7 +52,7 @@ Questions, bugs and feature ideas: open an issue on the project's repository.
 
 ## Authors
 
-Tristan Gérault and Christophe Pradal.
+Tristan Gérault, Christophe Pradal and Fabrice Bauget.
 
 ## License
 

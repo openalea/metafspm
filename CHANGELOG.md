@@ -57,7 +57,7 @@
   publications' time. The same bits at any process count: use case 1, 2 plants as 2 populations x 3 days, every
   table and frame byte-identical at 1 and 2 processes; checkpoints resume at any count. Limits: whole populations
   per worker (split with `planting(population=)`), `coupling="explicit"`, the cpu, fork (Linux, macOS).
-  docs/user.md "Populations in processes", docs/conventions.md "Owners, publication, copies".
+  doc/user.md "Populations in processes", doc/conventions.md "Owners, publication, copies".
 - Variable lookups cached (route A, A4): the DataStructure's stores dict is kept while its coarse scales stay and
   each name's store is remembered while it holds the name (`_find`, `_var_stores`, the located views' alike):
   `data_structure.get` of every variable of use case 1's 9 structures 9.2 -> 7.2 ms; use case 1, 2 plants x 3 days
@@ -70,7 +70,7 @@
   population or split by `planting(..., population=)` now give the same bits. **The single-process results change
   once** by round-off (use case 1, 2 plants x 3 days: the soil's plant_uptake by 2.4e-16 relative, one row; the roots'
   psi by up to 2.8e-15 relative, propagated by the water solve; root_uptake by 1.6e-16 of its scale), not again.
-  A per-scene summary over no entity now writes 0.0 (was the integer 0). docs/conventions.md "The plant order".
+  A per-scene summary over no entity now writes 0.0 (was the integer 0). doc/conventions.md "The plant order".
 - Thread and fork safety of the module-level state (route B, B0): the archetype extraction's flag, the systems a
   reduction's library skips and `Compute.current()`'s stack are per context (ContextVars; the archetypes' threads
   run in a copy); the shared positions' cache holds its arrays weakly under a lock, `solve.reduction._FIELDS` is
@@ -78,7 +78,7 @@
   hooks renew the locks and clear the timings, numba's thread count and the recorder's writer in a child;
   `compute.fork_safe_threading()` refuses numba's workqueue layer. Two populations stepped in two threads give the
   sequential bits (they could fail: "piece has no Dirichlet anchor", or wrong values); use case 1 unchanged, byte
-  for byte. docs/conventions.md "Threads and forks".
+  for byte. doc/conventions.md "Threads and forks".
 - The Organ label `Awn` (`labels.Organ.Awn`): a grass ear's awns, an organ of their own (Adel's, formerly
   labelled `Ear`).
 
@@ -89,11 +89,11 @@
   (`summaries.csv`, `segments.csv`), `summaries/Soil/<Model>/`, `summaries/Atmosphere/<Model>/` and
   `summaries/conservation.csv`; run.json, scenario.json, forcings/, frames/ and checkpoints/ stay at the root.
   `recorder.table_names()` gives the paths in `summaries/` (`"hand_declared/<name>"`); `recorder.table(name)` takes
-  them or a `tables=` name alone. docs/migration.md section 10.
+  them or a `tables=` name alone. doc/migration.md section 10.
 - The environment variables `METAFSPM_CHECK_TOPOLOGY` and `METAFSPM_CHECK_ARCHETYPES` are removed (QA-10, no
   fallback): the self-checks are `Compute(checks={"topology", "archetypes"})` (any collection of names among
   `compute.CHECKS`, none by default; an unknown name raises ValueError), recorded in run.json's provenance
-  (`"checks"`) and in scenario.json's `"compute"`. docs/migration.md section 8.
+  (`"checks"`) and in scenario.json's `"compute"`. doc/migration.md section 8.
 - run.json's `"versions"` is replaced by `"provenance"` (QA-9): python's version, every package the scene's models
   and components come from with its version and, for a clone, git commit and modified flag (numpy, scipy, pandas,
   numba, openalea.mtg, encoding3d too), the start date, coupling, links, seeds and the parameters (their hash and
@@ -106,4 +106,4 @@
   `role`, `aggregation`, `where=`, `absolute_tolerance`/`relative_tolerance`, `data_structure`, `mtg`,
   `step_duration`, `Scene.simulate(steps)`, `Scene.step_count`, `x_range`, `spacing`), the internal helpers
   `_`-prefixed, the public names imported from `openalea.metafspm`. No aliases. Checkpoints and frames carry a
-  format number (2); older ones are refused. The table: docs/migration.md, section 7.
+  format number (2); older ones are refused. The table: doc/migration.md, section 7.

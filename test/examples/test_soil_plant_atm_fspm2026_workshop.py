@@ -103,7 +103,7 @@ def test_the_tutorial_path_from_a_scenario_table_to_its_outputs(tmp_path):
 
 
 def test_a_scene_from_the_tables_column_is_the_tutorials_scene(tmp_path):
-    """Scene.from_scenario (docs/tutorial.md, step 3 in one call) builds the scene the explicit path builds."""
+    """Scene.from_scenario (doc/tutorial.md, step 3 in one call) builds the scene the explicit path builds."""
     from openalea.metafspm.scene.population import Planting
     from openalea.metafspm.scene.scenarios import read_scenarios
     from openalea.metafspm.scene.scene import Scene
