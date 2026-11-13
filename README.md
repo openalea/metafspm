@@ -9,7 +9,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
 [![Downloads](https://anaconda.org/openalea3/openalea.metafspm/badges/downloads.svg)](https://anaconda.org/openalea3/openalea.metafspm)
 
-[![DOI](https://zenodo.org/badge/994653515.svg)](https://zenodo.org/badge/latestdoi/994653515)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24167867.svg)](https://doi.org/10.5281/zenodo.24167867)
 
 ## Purpose 
 
@@ -204,7 +204,7 @@ We are open to contributions on the develop branch of this package.
 
 ## Authors and acknowledgment
 
-Gerault T., Rees F., Barillot R., Pradal C.
+Gérault T., Pradal C., Bauget F. To cite metafspm, see [CITATION.cff](CITATION.cff) (DOI [10.5281/zenodo.24167867](https://doi.org/10.5281/zenodo.24167867), always the latest version).
 
 ## License
 This project is licensed under the CeCILL-C License - see file [LICENSE](LICENSE) for details
